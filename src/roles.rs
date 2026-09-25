@@ -49,7 +49,7 @@ You are the implementer. Make the change the task describes, on your own branch,
     },
     Default_ {
         name: "reviewer",
-        text: "+++\ndescription = \"Reviews a diff or pull request and reports findings; changes nothing\"\n+++\n\
+        text: "+++\ndescription = \"Reviews a diff or pull request and reports findings; changes nothing\"\nagent = \"opencode\"\n+++\n\
 You are the reviewer. Read the diff, branch or pull request the task names and judge it against the task's goal and the project instructions. Do not edit files, commit, or push: findings go in your report only. List each finding with its file and line, most serious first, and end the `## Report` section with one line `Verdict: approve` or `Verdict: request-changes`.\n",
     },
     Default_ {
@@ -198,6 +198,7 @@ mod tests {
             let role = parse(d.name, d.text).unwrap();
             assert_eq!(role.name, d.name);
             assert!(!role.description.is_empty(), "{}", d.name);
+            assert_eq!(role.agent, if d.name == "reviewer" { "opencode" } else { "" }, "{}", d.name);
             assert!(role.body.starts_with("You are the "), "{}", d.name);
         }
     }

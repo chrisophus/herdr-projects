@@ -70,7 +70,7 @@ Every thread works from `<its working directory>/.herdr-project/<project>-<id>/`
 
 A role is a file `roles/<name>.md` in the project folder: an optional TOML block between `+++` lines, then the prompt a thread gets in its brief under `# Role: <name>`, just before `# Task`. The front matter may set `description` (shown in `context` and `role list`), `agent` (the default harness), `agent_args` (a default model flag, checked by the same model-only rule as `--agent-arg`, so a role cannot add a launch flag) and `kind` (default placement). `thread start --role <name>` uses them wherever `--agent`, `--agent-arg` and `--kind` are not given; a role's model flag applies only to the harness it names. The thread record keeps the role, so a restart briefs it again; if the file has been deleted by then, the brief says so instead of failing.
 
-`new` writes four defaults, `implementer`, `reviewer`, `scout` and `verifier`; `role init` writes the ones that are missing and never overwrites. Roles are yours: the coordinator changes them only when asked. A role is a prompt, not a permission: a `reviewer` is told not to edit, and its harness still runs under `thread_agent_args`.
+`new` writes four defaults, `implementer`, `reviewer`, `scout` and `verifier`; `role init` writes the ones that are missing and never overwrites. The default `reviewer` sets `agent = "opencode"`, so a review runs on a second harness unless `--agent` says otherwise; edit the file to change that. Roles are yours: the coordinator changes them only when asked. A role is a prompt, not a permission: a `reviewer` is told not to edit, and its harness still runs under `thread_agent_args`.
 
 ## The event log
 
