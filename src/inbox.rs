@@ -70,6 +70,7 @@ pub fn write(project: &Project, kind: &str, subject: &str, summary: &str, body: 
         text.push('\n');
     }
     project::write_atomic(&inbox_dir(project).join(format!("{id}.md")), text.as_bytes())?;
+    crate::events::append(project, &format!("inbox:{kind}"), if subject.starts_with("t-") { subject } else { "" }, &item.summary);
     Ok(id)
 }
 

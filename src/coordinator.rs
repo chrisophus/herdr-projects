@@ -556,6 +556,15 @@ pub fn digest(ctx: &Ctx, project: &Project, prefix: &str) -> Result<(String, Vec
     if !uploads.is_empty() {
         let _ = writeln!(out, "Uploads: {}", uploads.join(", "));
     }
+    let (roles, broken_roles) = crate::roles::list(project);
+    let _ = writeln!(
+        out,
+        "Roles: {}",
+        if roles.is_empty() { "(none; `role init` writes the defaults)".to_string() } else { roles.iter().map(|r| if r.description.is_empty() { r.name.clone() } else { format!("{} ({})", r.name, r.description) }).collect::<Vec<_>>().join("; ") }
+    );
+    for b in &broken_roles {
+        let _ = writeln!(out, "config-error: {}: {}", b.file, b.error);
+    }
 
     let _ = writeln!(out, "\n## Memory index (MEMORY.md)");
     let memory = std::fs::read_to_string(project.dir().join("MEMORY.md")).unwrap_or_default();
@@ -571,7 +580,8 @@ pub fn digest(ctx: &Ctx, project: &Project, prefix: &str) -> Result<(String, Vec
     for row in open {
         let t = &row.thread;
         let place = if t.repo.is_empty() { "no repo".to_string() } else { t.repo.clone() };
-        let _ = writeln!(out, "- {} [{}] ({}) {} — {} — {}", t.id, row.group.label(), row.note, t.title, place, t.agent);
+        let role = if t.role.is_empty() { String::new() } else { format!(" — role {}", t.role) };
+        let _ = writeln!(out, "- {} [{}] ({}) {} — {} — {}{role}", t.id, row.group.label(), row.note, t.title, place, t.agent);
         for line in crate::thread::all_next(project, &t.id) {
             let _ = writeln!(out, "  next: {line}");
         }

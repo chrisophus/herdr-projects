@@ -184,6 +184,7 @@ pub fn write_thread_items(project: &Project, state: &mut State, transitions: &[T
     state.session_item_written = false;
 
     for change in transitions {
+        crate::events::append(project, "thread-group", &change.id, &format!("{} ({})", change.to.label(), change.note));
         if !matches!(change.to, Group::WaitingOnYou | Group::Landing | Group::Idle) {
             continue;
         }

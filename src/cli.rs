@@ -260,6 +260,35 @@ enum Command {
         #[command(subcommand)]
         command: TickerCommand,
     },
+    /// The project's roles (roles/<name>.md)
+    Role {
+        #[command(subcommand)]
+        command: RoleCommand,
+    },
+    /// The project's event log (events.jsonl): what the binary did and saw, oldest first
+    Log {
+        slug: String,
+        /// Only one thread's events
+        #[arg(long, value_name = "ID")]
+        thread: Option<String>,
+        /// Only events newer than this: <N>m, <N>h or <N>d
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
+        /// The newest N events (default 50; 0 means all)
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// One JSON object per line, as stored
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoleCommand {
+    /// List the project's roles (roles/<name>.md) with their defaults
+    List { slug: String },
+    /// Write the default roles (implementer, reviewer, scout, verifier) that are missing; existing files are never touched
+    Init { slug: String },
 }
 
 #[derive(Subcommand)]
@@ -307,6 +336,9 @@ enum ThreadCommand {
         agent_args: Vec<String>,
         #[arg(long, value_name = "REF")]
         base: Option<String>,
+        /// A role from the project's roles/ folder: its prompt goes before the task; its defaults fill --agent, --agent-arg and --kind when those are not given
+        #[arg(long, value_name = "NAME")]
+        role: Option<String>,
         /// The task; `-` reads standard input
         #[arg(long, value_name = "FILE")]
         task_file: String,
@@ -495,6 +527,27 @@ pub fn run() -> Result<()> {
             }
         },
         Command::Context { slug, peek } => coordinator::context(&ctx, &slug, peek),
+        Command::Role { command } => match command {
+            RoleCommand::List { slug } => {
+                let project = Project::load(&ctx.root, &slug)?;
+                crate::roles::print_list(&project);
+                Ok(())
+            }
+            RoleCommand::Init { slug } => {
+                let project = Project::load(&ctx.root, &slug)?;
+                let written = crate::roles::write_defaults(&project)?;
+                if written.is_empty() {
+                    println!("every default role already exists in {}/roles", project.dir().display());
+                } else {
+                    println!("wrote roles/{}.md", written.join(".md, roles/"));
+                }
+                Ok(())
+            }
+        },
+        Command::Log { slug, thread, since, limit, json } => {
+            let since_secs = since.as_deref().map(crate::events::parse_since).transpose()?;
+            crate::events::print_log(&ctx, &slug, &crate::events::Filter { thread: thread.as_deref(), since_secs, limit }, json)
+        }
         Command::Overview { slug, wait } => overview::run(&ctx, slug.as_deref(), wait),
         Command::Focus { slug } => overview::focus(&ctx, slug.as_deref()),
         Command::Unfocus { session } => overview::unfocus(&ctx, &session.into()),
@@ -507,11 +560,11 @@ pub fn run() -> Result<()> {
             }
         },
         Command::Thread { command } => match command {
-            ThreadCommand::Start { slug, title, repo, machine, agent, kind, agent_args, base, task_file } => {
+            ThreadCommand::Start { slug, title, repo, machine, agent, kind, agent_args, base, role, task_file } => {
                 let task = read_text(&task_file)?;
                 let kind = kind.as_deref().map(crate::thread::Kind::parse).transpose()?;
-                let thread = threads::start(&ctx, &slug, StartArgs { title, repo, machine, agent, kind, agent_args, base, task })?;
-                println!("{}", serde_json::json!({ "id": thread.id, "kind": thread.kind, "agent": thread.agent, "branch": thread.branch, "pane_id": thread.pane_id }));
+                let thread = threads::start(&ctx, &slug, StartArgs { title, repo, machine, agent, kind, agent_args, base, task, role })?;
+                println!("{}", serde_json::json!({ "id": thread.id, "kind": thread.kind, "agent": thread.agent, "role": thread.role, "branch": thread.branch, "pane_id": thread.pane_id }));
                 Ok(())
             }
             ThreadCommand::Restart { slug, id, agent, agent_args } => {

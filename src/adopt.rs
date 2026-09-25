@@ -81,6 +81,7 @@ pub fn adopt(ctx: &Ctx, slug: &str, pane: &str, title: &str, task: Option<String
         t.pane_id = agent.pane_id.clone();
     })?;
     let id = created.id.clone();
+    crate::events::append(&project, "thread-adopted", &id, &format!("\"{}\" adopted from pane {} ({})", created.title, created.pane_id, created.agent));
     let task = task.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| DEFAULT_TASK.to_string());
 
     let briefed = (|| -> Result<()> {

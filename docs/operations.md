@@ -19,6 +19,7 @@ How Herdr Projects works, what it writes where, what its safety settings do and 
 ```
 ~/.herdr-projects/<project>/
   PROJECT.md              settings (TOML between +++ lines) and your standing instructions
+  roles/<name>.md         roles for threads (optional TOML between +++ lines, then the prompt); yours
   AGENTS.md, CLAUDE.md    who is the coordinator, by working directory; written by the binary
   MEMORY.md, memory/      project memory; the coordinator's
   TASKS.md                the task list; the coordinator's
@@ -29,6 +30,7 @@ How Herdr Projects works, what it writes where, what its safety settings do and 
   threads/<id>.task.md    the task and every forwarded prompt (## Follow-ups)
   threads/<id>.next.md    Next lines the coordinator added    threads/<id>/  a tab thread's folder
   inbox/, inbox/done/     events for the coordinator
+  events.jsonl            the log: one JSON line per thread step and inbox item; append-only, never pruned
   library/<id>/           home copy of files a thread produced
   .state/                 status, coordinator record, live coordinators, ticker state, lock
 ~/.herdr-projects/.ticker.lock  .ticker.log  .progress/  .trash/
@@ -49,18 +51,30 @@ Every thread works from `<its working directory>/.herdr-project/<project>-<id>/`
 | `open <project> [--agent KIND] [--agent-arg A]... [--new] [--tab] [--session N \| --socket P] [--rebind]` | A coordinator agent in the project folder; focuses a running one. From a shell pane inside Herdr it runs in that pane and quitting it returns to the shell; `--tab`, the popup, actions and a terminal outside Herdr use a tab of the project's workspace. |
 | `context <project> [--peek]` | The digest the coordinator reads every turn. |
 | `coordinator prompt <project> --text-file F` | A sentence to the coordinator (the popup's task keys use it). |
-| `thread start <project> --title T [--repo PATH] [--kind worktree\|tab\|checkout] [--agent KIND] [--agent-arg A]... [--machine M] [--base REF] --task-file F` | New thread; `-` reads the task from standard input. `--agent-arg` takes only a model flag (see below). |
+| `thread start <project> --title T [--repo PATH] [--kind worktree\|tab\|checkout] [--agent KIND] [--agent-arg A]... [--role NAME] [--machine M] [--base REF] --task-file F` | New thread; `-` reads the task from standard input. `--agent-arg` takes only a model flag (see below). `--role` puts a role's prompt in the brief and takes its defaults (see [Roles](#roles)). |
 | `thread prompt`, `thread next [--line N \| --add TEXT]`, `thread stop`, `thread restart [--agent KIND] [--agent-arg A]...` | Steer a thread. Prompts are recorded in its task file. |
 | `thread list/show [--json]`, `thread ack`, `thread adopt` | Look at threads. |
 | `thread resolve [--keep-worktree] [--discard-uncopied] [--skip-copy] [--reopen]` | Final copy home, then clean up. |
 | `sweep <project> [--dry-run] [--yes]` | Remove what nothing uses any more. |
 | `set <project> <key> <value>`, `routine list/toggle/approve`, `safety show` | Settings and routines. |
+| `role list <project>`, `role init <project>` | The project's roles; `init` writes the missing defaults and touches no existing file. |
+| `log <project> [--thread ID] [--since <N>m\|h\|d] [--limit N] [--json]` | The event log, oldest first; `--limit 0` for all (default 50). |
 | `pause`, `resume`, `archive`, `unarchive`, `delete [--force]` | Project lifecycle. |
 | `popup [project]`, `focus [project]`, `unfocus`, `overview [project]`, `needs-you --line` | Views. |
 | `configure [--key K] [--hooks-only] [--dry-run]`, `unconfigure`, `report`, `progress` | Sidebar, keys, hooks, the `autoproject` skill, self-reports. |
 | `open-file <path>`, `open-url <url>` | Open a text file in a new tab with `$EDITOR`, or a PR in the browser. |
 | `ticker start \| run \| stop \| status`, `doctor [--fix]`, `skill` | Housekeeping. |
 | `update [--check]` | Update to the newest release: fetch, rebuild, `doctor --fix`, restart the ticker. |
+
+## Roles
+
+A role is a file `roles/<name>.md` in the project folder: an optional TOML block between `+++` lines, then the prompt a thread gets in its brief under `# Role: <name>`, just before `# Task`. The front matter may set `description` (shown in `context` and `role list`), `agent` (the default harness), `agent_args` (a default model flag, checked by the same model-only rule as `--agent-arg`, so a role cannot add a launch flag) and `kind` (default placement). `thread start --role <name>` uses them wherever `--agent`, `--agent-arg` and `--kind` are not given; a role's model flag applies only to the harness it names. The thread record keeps the role, so a restart briefs it again; if the file has been deleted by then, the brief says so instead of failing.
+
+`new` writes four defaults, `implementer`, `reviewer`, `scout` and `verifier`; `role init` writes the ones that are missing and never overwrites. Roles are yours: the coordinator changes them only when asked. A role is a prompt, not a permission: a `reviewer` is told not to edit, and its harness still runs under `thread_agent_args`.
+
+## The event log
+
+`events.jsonl` in the project folder gets one line for everything the binary does to a thread (`thread-started`, `thread-launched`, `thread-group` for every group change, `thread-prompted`, `thread-next-added`, `thread-stopped`, `thread-acked`, `thread-restarted`, `thread-resolved`, `thread-reopened`, `thread-adopted`, `thread-failed`) and one for every inbox item (`inbox:<kind>`), each as `{"ts","kind","thread","summary"}`. It is append-only and never pruned, unlike `inbox/done/`, so it is the project's history after reports have been rewritten and inbox items are gone. `log` reads it; `context` does not print it.
 
 ## Groups
 

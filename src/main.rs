@@ -4,6 +4,7 @@ mod agents;
 mod cli;
 mod coordinator;
 mod doctor;
+mod events;
 mod herdr;
 mod inbox;
 mod lifecycle;
@@ -16,6 +17,7 @@ mod pr;
 mod progress;
 mod project;
 mod remote;
+mod roles;
 mod routine;
 mod runner;
 #[cfg(test)]

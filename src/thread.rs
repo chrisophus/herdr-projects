@@ -77,6 +77,8 @@ pub struct Thread {
     pub tab_id: String,
     pub pane_id: String,
     pub agent: String,
+    /// The role (`roles/<name>.md`) whose prompt the brief carries; "" for none.
+    pub role: String,
     /// A model flag for the agent CLI at launch (checked again by the ticker),
     /// appended after the project's `thread_agent_args` safety setting.
     pub agent_args: Vec<String>,
@@ -302,6 +304,8 @@ pub struct BriefInput<'a> {
     /// (file name, contents), in the order they should be inlined.
     pub memory_files: &'a [(String, String)],
     pub task: &'a str,
+    /// The role's name and prompt, inserted before the task.
+    pub role: Option<(&'a str, &'a str)>,
     pub restart: bool,
     pub report_path: &'a str,
     pub library_path: &'a str,
@@ -374,6 +378,9 @@ pub fn compose_brief(input: &BriefInput) -> String {
     } else {
         brief.push_str(&format!("Report progress in this pane with `{} report --percent N --activity '...'` (two to four words; `--unknown` while the scope is unclear): at the start, at milestones, about once a minute while working, `--activity 'Waiting for you'` before asking the user something, and `--percent 100` when the whole task is done.\n", input.report_prefix));
     }
+    if let Some((name, prompt)) = input.role {
+        brief.push_str(&format!("\n# Role: {name}\n\n{}\n", prompt.trim()));
+    }
     brief.push_str("\n# Task\n\n");
     brief.push_str(input.task.trim());
     brief.push_str(&format!(
@@ -387,6 +394,16 @@ pub fn compose_brief(input: &BriefInput) -> String {
 pub fn brief_for(project: &Project, thread: &Thread, task: &str, restart: bool) -> Result<String> {
     let (settings, instructions) = project.read_project_md()?;
     let project_name = project::display_name(&settings.name, &project.slug);
+    // A role file that went missing after the thread started still leaves a
+    // restarted thread with a brief that says so.
+    let role = if thread.role.is_empty() {
+        None
+    } else {
+        Some(match crate::roles::load(project, &thread.role) {
+            Ok(role) => (thread.role.clone(), role.body),
+            Err(error) => (thread.role.clone(), format!("(the role file is not usable: {error:#})")),
+        })
+    };
     let uploads = project.dir().join("uploads").to_string_lossy().into_owned();
     let prefix = if thread.is_remote() { String::new() } else { crate::coordinator::current_prefix(&project.root).unwrap_or_default() };
     let memory_index = std::fs::read_to_string(project.dir().join("MEMORY.md")).unwrap_or_default();
@@ -420,6 +437,7 @@ pub fn brief_for(project: &Project, thread: &Thread, task: &str, restart: bool) 
         memory_index: &memory_index,
         memory_files: &memory_files,
         task,
+        role: role.as_ref().map(|(name, body)| (name.as_str(), body.as_str())),
         restart,
         report_path: &thread.report_path(),
         library_path: &thread.library_path(),
@@ -1147,6 +1165,7 @@ mod tests {
             memory_index: "# Memory\n- a\n- b\n- c",
             memory_files: &files,
             task: "Do the thing.",
+            role: Some(("reviewer", "You are the reviewer.")),
             restart: true,
             report_path: "/wt/.herdr-project/demo-t-0001/report.md",
             library_path: "/wt/.herdr-project/demo-t-0001/library",
@@ -1163,7 +1182,8 @@ mod tests {
         assert!(pos("Always run the tests.") < pos("# Memory"));
         assert!(pos("# Memory") < pos("alpha fact"));
         assert!(pos("alpha fact") < pos("# Progress"));
-        assert!(pos("/bin/hp --root /r report --percent N") < pos("Do the thing."));
+        assert!(pos("/bin/hp --root /r report --percent N") < pos("# Role: reviewer"));
+        assert!(pos("# Role: reviewer\n\nYou are the reviewer.") < pos("# Task\n\nDo the thing."));
         assert!(pos("Do the thing.") < pos("# Paths"));
         assert!(brief.contains("gamma fact"));
         assert!(brief.contains("Not inlined because project memory is over 32000 characters: memory/b.md."));
@@ -1173,8 +1193,9 @@ mod tests {
             assert!(!brief.contains(word), "{word}");
         }
 
-        let fresh = compose_brief(&BriefInput { goal: "", repos: &[], remote: true, instructions: "", memory_index: "", memory_files: &[], task: "t", restart: false, report_path: "r", library_path: "l", report_prefix: "", ..input });
+        let fresh = compose_brief(&BriefInput { goal: "", repos: &[], remote: true, instructions: "", memory_index: "", memory_files: &[], task: "t", role: None, restart: false, report_path: "r", library_path: "l", report_prefix: "", ..input });
         assert!(!fresh.contains("previous attempt"));
+        assert!(!fresh.contains("# Role"));
         assert!(fresh.contains("- Goal: (none set)\n- Repos: (none)\n"));
         assert!(fresh.contains("on the home machine; not copied"));
     }

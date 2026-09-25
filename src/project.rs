@@ -427,7 +427,7 @@ popup or by asking the coordinator.
 
 /// The folders every project has. `uploads/` is yours (files for threads),
 /// `library/` holds what threads produced.
-pub const SUBDIRS: [&str; 9] = ["memory", "scratch", "routines", "threads", "inbox", "inbox/done", "library", "uploads", ".state"];
+pub const SUBDIRS: [&str; 10] = ["memory", "scratch", "routines", "roles", "threads", "inbox", "inbox/done", "library", "uploads", ".state"];
 
 /// The text of `AGENTS.md`. Harnesses load it from every ancestor of their
 /// working directory, and tab threads run under `threads/<id>/`, so it says
@@ -581,6 +581,7 @@ pub fn create(root: &Path, name: &str, goal: &str, repos: Vec<Repo>) -> Result<P
     )?;
     write_atomic(&dir.join("TASKS.md"), TASKS_TEMPLATE.as_bytes())?;
     write_atomic(&dir.join(PR_FOLLOWUP), PR_FOLLOWUP_TEMPLATE.as_bytes())?;
+    crate::roles::write_defaults(&project)?;
     write_json(&project.state_dir().join("project.json"), &ProjectState::default())?;
     // PROJECT.md last: a folder without it is not a project, so a half-made
     // skeleton is never picked up by `list` or the ticker.
