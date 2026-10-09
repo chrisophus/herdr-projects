@@ -200,6 +200,8 @@ fn save_queue(project: &Project, queue: &Queue) -> Result<()> {
 pub enum Route {
     Project(String, String),
     Reply(String),
+    /// `/away [on|off] [project]`: `None` asks for the state.
+    Away(Option<bool>, Option<String>),
 }
 
 /// What the user wrote, and where it goes: a reply to a message about a
@@ -216,6 +218,16 @@ pub fn route(text: &str, reply_to: Option<i64>, state: &RootState, active: &[Str
     match command {
         "/start" | "/help" => return Route::Reply(help(active)),
         "/projects" => return Route::Reply(String::new()),
+        "/away" => {
+            let mut words = rest.split_whitespace();
+            let state = match words.next() {
+                None => None,
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                Some(_) => return Route::Reply("Usage: /away on|off [project]".into()),
+            };
+            return Route::Away(state, words.next().map(str::to_string));
+        }
         "/to" => {
             let (slug, message) = match rest.split_once(char::is_whitespace) {
                 Some((s, m)) => (s, m.trim()),
@@ -248,7 +260,7 @@ fn list_line(active: &[String]) -> String {
 
 fn help(active: &[String]) -> String {
     format!(
-        "herdr-projects\n\nNotifications from your projects arrive here. Write to a project's coordinator by replying to one of its notifications, or with /to <project> <message>; later messages go to the same project. With one active project, any message goes to it.\n\n/projects lists the projects and what needs you.\n\n{}",
+        "herdr-projects\n\nNotifications from your projects arrive here. Write to a project's coordinator by replying to one of its notifications, or with /to <project> <message>; later messages go to the same project. With one active project, any message goes to it.\n\n/projects lists the projects and what needs you. /away on or /away off [project] switches away mode: while it is on, notifications come here.\n\n{}",
         list_line(active)
     )
 }
@@ -269,6 +281,36 @@ fn projects_text(root: &Path) -> String {
         lines.push(format!("{name} ({slug}): {}{coordinator}", if line.is_empty() { "idle".to_string() } else { line }));
     }
     if lines.is_empty() { "There are no projects.".into() } else { lines.join("\n") }
+}
+
+/// `/away`: switches away mode for the named project, else for every active
+/// one, and says what it did. Away mode grants nothing (it only changes what is
+/// alerted and where), so the chat may switch it.
+fn away_text(root: &Path, state: Option<bool>, slug: Option<&str>, active: &[String]) -> String {
+    let slugs: Vec<String> = match slug {
+        Some(slug) => vec![slug.to_string()],
+        None => active.to_vec(),
+    };
+    if slugs.is_empty() {
+        return list_line(active);
+    }
+    let mut lines = Vec::new();
+    for slug in slugs {
+        let Ok(project) = Project::load(root, &slug) else {
+            lines.push(format!("There is no project `{slug}`. {}", list_line(active)));
+            continue;
+        };
+        let away = match state {
+            Some(on) => crate::away::set(&project, on).map(|a| a.on),
+            None => Ok(crate::away::load(&project).on),
+        };
+        lines.push(match away {
+            Ok(true) => format!("{slug}: away"),
+            Ok(false) => format!("{slug}: present"),
+            Err(error) => format!("{slug}: {error:#}"),
+        });
+    }
+    lines.join("\n")
 }
 
 fn active_slugs(root: &Path) -> Vec<String> {
@@ -311,6 +353,7 @@ pub fn poll(ctx: &Ctx) -> Vec<anyhow::Error> {
         let answer = match route(text, reply_to, &state, &active) {
             Route::Reply(text) if text.is_empty() => Some(projects_text(&ctx.root)),
             Route::Reply(text) => Some(text),
+            Route::Away(state, slug) => Some(away_text(&ctx.root, state, slug.as_deref(), &active)),
             Route::Project(slug, text) => match handle(ctx, &slug, &text, message_id) {
                 Ok(answer) => {
                     state.last = slug;
@@ -478,6 +521,10 @@ mod tests {
         assert_eq!(route("hello", None, &s, &["billing".into()]), project("billing", "hello"));
         assert!(matches!(route("/help", None, &s, &active), Route::Reply(t) if t.contains("/projects")));
         assert_eq!(route("/projects", None, &s, &active), Route::Reply(String::new()));
+        assert_eq!(route("/away on", None, &s, &active), Route::Away(Some(true), None));
+        assert_eq!(route("/away@hp_bot off docs", None, &s, &active), Route::Away(Some(false), Some("docs".into())));
+        assert_eq!(route("/away", None, &s, &active), Route::Away(None, None));
+        assert!(matches!(route("/away maybe", None, &s, &active), Route::Reply(t) if t.starts_with("Usage")));
         assert!(matches!(route("/to", None, &s, &active), Route::Reply(t) if t.starts_with("Usage")));
     }
 

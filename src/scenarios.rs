@@ -2970,6 +2970,18 @@ fn fake_telegram(world: &World, updates: &str) -> Rc<RefCell<Vec<serde_json::Val
 }
 
 #[test]
+fn telegram_away_switches_away_mode_for_every_active_project() {
+    let (world, project, _) = finished_world("blocked");
+    let updates = r#"[{"update_id":1,"message":{"message_id":1,"chat":{"id":42},"text":"/away on"}}]"#;
+    let sent = fake_telegram(&world, updates);
+    let ctx = world.ctx();
+    assert!(crate::telegram::poll(&ctx).is_empty());
+    assert!(crate::away::load(&project).on);
+    let texts: Vec<String> = sent.borrow().iter().map(|b| b["text"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(texts, ["demo: away"], "{texts:?}");
+}
+
+#[test]
 fn notifications_go_to_the_phone_only_while_away_unless_notify_is_always() {
     let (world, project, _) = finished_world("blocked");
     let sent = fake_telegram(&world, "[]");
