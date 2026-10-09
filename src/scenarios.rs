@@ -158,6 +158,7 @@ fn thread_start_returns_without_an_agent_and_the_ticker_launches_then_prompts() 
             agent_args: vec!["--model".into(), "opus".into()],
             base: None,
             task: "Do the thing.".into(),
+            role: None,
         },
     )
     .unwrap();
@@ -487,7 +488,7 @@ fn thread_start_is_refused_when_paused() {
     let world = World::new();
     let project = world.project("demo", "a.sock");
     project.set_status(project::Status::Paused).unwrap();
-    let args = StartArgs { title: "x".into(), repo: None, machine: None, agent: None, kind: None, agent_args: vec![], base: None, task: "t".into() };
+    let args = StartArgs { title: "x".into(), repo: None, machine: None, agent: None, kind: None, agent_args: vec![], base: None, task: "t".into(), role: None };
     let error = threads::start(&world.ctx(), "demo", args).unwrap_err().to_string();
     assert!(error.contains("paused"), "{error}");
     assert!(thread::list(&project).is_empty());
@@ -502,7 +503,7 @@ fn thread_start_and_open_refuse_agent_args_other_than_a_model_flag() {
     let world = World::new();
     let project = world.project("demo", "a.sock");
     for bad in [&["--dangerously-skip-permissions"][..], &["--yolo"], &["--model"], &["--model", "--foo"], &["--model", "x", "--extra"]] {
-        let args = StartArgs { title: "x".into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: strings(bad), base: None, task: "t".into() };
+        let args = StartArgs { title: "x".into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: strings(bad), base: None, task: "t".into(), role: None };
         let error = threads::start(&world.ctx(), "demo", args).unwrap_err().to_string();
         assert!(error.contains("--agent-arg only takes a model flag"), "{error}");
         assert!(error.contains("thread_agent_args = []") && error.contains("[safety."), "the safety table is shown: {error}");
@@ -1341,7 +1342,7 @@ fn a_remote_thread_blocked_at_a_poll_is_waiting_on_you_at_once() {
 fn a_remote_thread_without_a_repo_is_refused() {
     let world = World::new();
     world.project("demo", "a.sock");
-    let args = StartArgs { title: "x".into(), repo: None, machine: Some("box".into()), agent: None, kind: None, agent_args: vec![], base: None, task: "t".into() };
+    let args = StartArgs { title: "x".into(), repo: None, machine: Some("box".into()), agent: None, kind: None, agent_args: vec![], base: None, task: "t".into(), role: None };
     assert!(threads::start(&world.ctx(), "demo", args).unwrap_err().to_string().contains("needs --repo"));
 }
 
@@ -1524,7 +1525,7 @@ fn a_tab_thread_gets_a_brief_with_the_project_header_and_prompts_are_recorded() 
     world.runner.on("pane get", ok(r#"{"result":{"pane":{"cwd":""}}}"#));
     world.runner.on("agent prompt", ok(r#"{"result":{}}"#));
     let ctx = world.ctx();
-    let t = threads::start(&ctx, "demo", StartArgs { title: "Research".into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: vec![], base: None, task: "Look into it.".into() }).unwrap();
+    let t = threads::start(&ctx, "demo", StartArgs { title: "Research".into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: vec![], base: None, task: "Look into it.".into(), role: None }).unwrap();
     assert_eq!(t.kind, Kind::Tab);
     let brief = std::fs::read_to_string(Path::new(&t.thread_dir).join("brief.md")).unwrap();
     assert!(brief.starts_with("# Project\n\n- Project: Demo (`demo`)\n- Goal: Ship it\n- Repos: (none)\n- Uploads"), "{brief}");
@@ -1753,7 +1754,7 @@ fn a_tab_thread_of_a_coordinator_running_in_another_workspace_opens_the_project_
     h.open(true, false).unwrap();
     let folder = h.project.dir().join("threads/t-0001");
     h.world.runner.on("pane get", ok(r#"{"result":{"pane":{"cwd":""}}}"#));
-    let args = |title: &str| StartArgs { title: title.into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: vec![], base: None, task: "Look.".into() };
+    let args = |title: &str| StartArgs { title: title.into(), repo: None, machine: None, agent: None, kind: Some(Kind::Tab), agent_args: vec![], base: None, task: "Look.".into(), role: None };
     let t = threads::start(&h.world.ctx(), "demo", args("Research")).unwrap();
     let calls = h.world.runner.calls.borrow();
     let create = calls.iter().filter(|c| c.display().contains("workspace create")).last().unwrap();
@@ -1948,4 +1949,66 @@ fn an_agent_in_the_threads_folder_is_not_the_coordinator() {
     ticker::tick_for_test(&ctx, &mut crate::steps::Memory::new(&ctx));
     assert!(project.coordinator().is_none());
     assert_eq!(world.runner.count("report-metadata"), 0);
+}
+
+#[test]
+fn a_role_fills_the_brief_and_the_defaults_and_every_step_is_logged() {
+    let world = World::new();
+    let project = world.project("demo", "a.sock");
+    *world.panes.borrow_mut() = format!("[{}]", world.coordinator_pane(&project));
+    world.runner.on("tab create", ok(r#"{"result":{"tab":{"tab_id":"w1:t2"},"root_pane":{"pane_id":"w1:p2","tab_id":"w1:t2","workspace_id":"w1"}}}"#));
+    world.runner.on("pane get", ok(r#"{"result":{"pane":{"pane_id":"w1:p2","cwd":""}}}"#));
+    world.runner.on("agent prompt", ok(r#"{"result":{}}"#));
+    let ctx = world.ctx();
+
+    // `new` wrote the defaults; the user edits one and adds one with defaults.
+    let (roles, broken) = crate::roles::list(&project);
+    assert_eq!(roles.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["implementer", "reviewer", "scout", "verifier"]);
+    assert!(broken.is_empty());
+    std::fs::write(project.dir().join("roles/reader.md"), "+++\ndescription = \"Reads\"\nagent = \"codex\"\nagent_args = [\"--model\", \"mini\"]\nkind = \"tab\"\n+++\nYou only read.\n").unwrap();
+
+    let start = |title: &str, role: Option<&str>, agent: Option<&str>| StartArgs {
+        title: title.into(), repo: None, machine: None, agent: agent.map(str::to_string), kind: None, agent_args: vec![], base: None, task: "Look.".into(), role: role.map(str::to_string),
+    };
+    // An unknown role is refused before anything is created.
+    let error = threads::start(&ctx, "demo", start("x", Some("nope"), None)).unwrap_err().to_string();
+    assert!(error.contains("no role `nope`"), "{error}");
+    assert!(thread::list(&project).is_empty());
+
+    // The role's defaults apply: agent, model flag, placement.
+    let t = threads::start(&ctx, "demo", start("Read it", Some("reader"), None)).unwrap();
+    assert_eq!((t.role.as_str(), t.agent.as_str(), t.kind), ("reader", "codex", Kind::Tab));
+    assert_eq!(t.agent_args, ["--model", "mini"]);
+    let brief = std::fs::read_to_string(Path::new(&t.thread_dir).join("brief.md")).unwrap();
+    let pos = |needle: &str| brief.find(needle).unwrap_or_else(|| panic!("missing {needle}"));
+    assert!(pos("# Role: reader\n\nYou only read.") < pos("# Task\n\nLook."));
+
+    // `--agent` wins over the role's agent, and the role's model flag is then
+    // not applied (it was written for codex).
+    let t2 = threads::start(&ctx, "demo", start("Read again", Some("reader"), Some("claude"))).unwrap();
+    assert_eq!((t2.agent.as_str(), t2.agent_args.len()), ("claude", 0));
+
+    // A thread without a role has no Role section.
+    let t3 = threads::start(&ctx, "demo", start("Plain", None, None)).unwrap();
+    assert!(t3.role.is_empty());
+    assert!(!std::fs::read_to_string(Path::new(&t3.thread_dir).join("brief.md")).unwrap().contains("# Role"));
+
+    // The role file going missing does not break a restart's brief.
+    std::fs::remove_file(project.dir().join("roles/reader.md")).unwrap();
+    let with_dir = thread::load(&project, &t.id).unwrap();
+    let again = thread::brief_for(&project, &with_dir, "Look.", true).unwrap();
+    assert!(again.contains("# Role: reader\n\n(the role file is not usable: no role `reader`"));
+
+    // The event log has one line per step, oldest first.
+    let events = crate::events::read(&project);
+    let kinds: Vec<&str> = events.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(kinds, ["thread-started", "thread-started", "thread-started"]);
+    assert_eq!(events[0].thread, "t-0001");
+    assert_eq!(events[0].summary, "\"Read it\" as reader (codex)");
+    assert_eq!(events[2].summary, "\"Plain\" as no role (claude)");
+    crate::inbox::write(&project, "pr", "t-0001", "pull request opened", "").unwrap();
+    crate::inbox::write(&project, "session", "session", "herdr session restarted", "").unwrap();
+    let events = crate::events::read(&project);
+    assert_eq!((events[3].kind.as_str(), events[3].thread.as_str()), ("inbox:pr", "t-0001"));
+    assert_eq!((events[4].kind.as_str(), events[4].thread.as_str()), ("inbox:session", ""));
 }

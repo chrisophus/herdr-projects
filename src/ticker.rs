@@ -623,6 +623,7 @@ fn launch_pass(ctx: &Ctx, project: &Project, herdr: &Herdr, threads: &[thread::T
             let mut args = safety.thread_agent_args.clone();
             args.extend(model);
             herdr.on_machine(&t.machine).agent_start(&t.agent_name, &t.agent, &t.pane_id, &args)?;
+            crate::events::append(project, "thread-launched", &t.id, &format!("{} agent `{}` started in pane {} (attempt {})", t.agent, t.agent_name, t.pane_id, t.launch_attempts + 1));
             Ok(())
         })();
         errors.extend(launched.err().map(|e| e.context(format!("{}: launch", t.id))));

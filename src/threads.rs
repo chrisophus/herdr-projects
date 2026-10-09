@@ -81,6 +81,17 @@ pub struct StartArgs {
     pub agent_args: Vec<String>,
     pub base: Option<String>,
     pub task: String,
+    /// A role from `roles/` (`--role`): its prompt goes in the brief, its
+    /// front matter fills in `--agent`, `--agent-arg` and `--kind` when they
+    /// are not given.
+    pub role: Option<String>,
+}
+
+/// The first line of a prompt, cut to 120 characters, for the event log.
+fn excerpt(text: &str) -> String {
+    let line = text.trim().lines().next().unwrap_or_default();
+    let cut: String = line.chars().take(120).collect();
+    if cut.chars().count() < line.chars().count() { format!("{cut}…") } else { cut }
 }
 
 /// The placement of a new thread from what was asked and whether it has a repo.
@@ -144,22 +155,55 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
         );
     }
 
-    let agent_kind = args.agent.clone().unwrap_or_else(|| settings.thread_agent.clone());
+    let role = args.role.as_deref().map(|name| crate::roles::load(&project, name)).transpose()?;
+    let agent_kind = args
+        .agent
+        .clone()
+        .or_else(|| role.as_ref().map(|r| r.agent.clone()).filter(|a| !a.is_empty()))
+        .unwrap_or_else(|| settings.thread_agent.clone());
     if !crate::agents::is_kind(&agent_kind) {
         bail!("`{agent_kind}` is not a Herdr agent kind; `herdr agent start --help` lists them");
     }
-    crate::settings::require_model_args(ctx, &project, &agent_kind, &args.agent_args)?;
-    let kind = placement(args.kind, !repo.is_empty(), !machine.is_empty())?;
+    // The role's model flag applies only when none is given, and to the
+    // harness it was written for.
+    let agent_args = if args.agent_args.is_empty() {
+        role.as_ref().filter(|r| r.agent.is_empty() || r.agent == agent_kind).map(|r| r.agent_args.clone()).unwrap_or_default()
+    } else {
+        args.agent_args.clone()
+    };
+    crate::settings::require_model_args(ctx, &project, &agent_kind, &agent_args)?;
+    let kind = match args.kind {
+        Some(kind) => Some(kind),
+        None => match role.as_ref().map(|r| r.kind.as_str()).unwrap_or("") {
+            "" => None,
+            role_kind => Some(Kind::parse(role_kind)?),
+        },
+    };
+    let kind = placement(kind, !repo.is_empty(), !machine.is_empty())?;
     let record = thread::allocate(&project, |t| {
         t.title = args.title.trim().to_string();
         t.kind = kind;
         t.repo = repo.clone();
         t.machine = machine.clone();
         t.agent = agent_kind.clone();
-        t.agent_args = args.agent_args.clone();
+        t.role = role.as_ref().map(|r| r.name.clone()).unwrap_or_default();
+        t.agent_args = agent_args.clone();
         t.base = args.base.clone().unwrap_or_default();
     })?;
     let id = record.id.clone();
+    crate::events::append(
+        &project,
+        "thread-started",
+        &id,
+        &format!(
+            "\"{}\" as {} ({}{}{})",
+            record.title,
+            if record.role.is_empty() { "no role".to_string() } else { record.role.clone() },
+            record.agent,
+            if repo.is_empty() { String::new() } else { format!(", {repo}") },
+            if machine.is_empty() { String::new() } else { format!(" on {machine}") }
+        ),
+    );
     {
         let _lock = project.lock()?;
         project::write_atomic(&thread::task_path(&project, &id), args.task.as_bytes())?;
@@ -174,6 +218,7 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
                 t.status = Status::Failed;
                 t.error = message.clone();
             });
+            crate::events::append(&project, "thread-failed", &id, &message);
             Err(error.context(format!("thread {id} failed to start; `thread restart {slug} {id}` retries")))
         }
     }
@@ -465,6 +510,7 @@ pub fn restart(ctx: &Ctx, slug: &str, id: &str, agent: Option<&str>, agent_args:
         }
     };
 
+    crate::events::append(&project, "thread-restarted", id, &format!("restart requested ({} agent)", record.agent));
     match restart_plan(&record, &live, branch_exists, now)? {
         RestartPlan::Create => return place_and_brief(ctx, &project, &view, id, true),
         RestartPlan::ReusePane => {}
@@ -517,6 +563,7 @@ pub fn prompt(ctx: &Ctx, slug: &str, id: &str, text: &str) -> Result<String> {
     // Written after the send, so the task file never claims a prompt that was
     // refused; a restarted thread re-reads it with its task.
     thread::append_follow_up(&project, id, text)?;
+    crate::events::append(&project, "thread-prompted", id, &excerpt(text));
     Ok(state)
 }
 
@@ -535,6 +582,7 @@ pub fn next(ctx: &Ctx, slug: &str, id: &str, line: Option<usize>, add: Option<&s
         let mut current = std::fs::read_to_string(&path).unwrap_or_default();
         current.push_str(&format!("- {text}\n"));
         project::write_atomic(&path, current.as_bytes())?;
+        crate::events::append(&project, "thread-next-added", id, text);
         println!("added to {id}'s Next list");
         return Ok(());
     }
@@ -570,6 +618,7 @@ pub fn stop(ctx: &Ctx, slug: &str, id: &str) -> Result<()> {
         .on_machine(&record.machine)
         .call(&["agent", "send-keys", &record.pane_id, "esc"], crate::herdr::CALL_TIMEOUT)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
+    crate::events::append(&project, "thread-stopped", id, &format!("Escape sent to pane {}", record.pane_id));
     println!("sent Escape to {id} (pane {})", record.pane_id);
     Ok(())
 }
@@ -593,6 +642,7 @@ pub fn ack(ctx: &Ctx, slug: &str, id: &str) -> Result<()> {
     if record.report_hash.is_empty() {
         println!("{id} has no report yet; nothing to acknowledge");
     } else {
+        crate::events::append(&project, "thread-acked", id, "report acknowledged");
         println!("{id}: report acknowledged");
     }
     Ok(())
@@ -619,6 +669,7 @@ pub fn resolve(ctx: &Ctx, slug: &str, id: &str, args: &ResolveArgs) -> Result<()
             t.status = Status::Open;
             t.resolved_reason.clear();
         })?;
+        crate::events::append(&project, "thread-reopened", id, "reopened; nothing started");
         println!("{id} is open again. Nothing was started; `thread restart {slug} {id}` brings its agent back.");
         return Ok(());
     }
@@ -654,6 +705,7 @@ pub fn resolve(ctx: &Ctx, slug: &str, id: &str, args: &ResolveArgs) -> Result<()
         copy_complete: copy_complete || args.discard_uncopied,
         merged_head: crate::steps::load_state(&project).prs.get(id).map(|s| s.head_oid.clone()).unwrap_or_default(),
     });
+    crate::events::append(&project, "thread-resolved", id, &format!("manual; {}", notes.join("; ")));
     println!("{id} resolved; its report and library are kept.");
     for note in &notes {
         println!("  - {note}");
@@ -926,7 +978,8 @@ pub fn print_list(ctx: &Ctx, slug: &str, json: bool) -> Result<()> {
         return Ok(());
     }
     for row in rows {
-        println!("{}\t{}\t{}\t{}", row.thread.id, row.group.label(), row.note, row.thread.title);
+        let role = if row.thread.role.is_empty() { String::new() } else { format!(" ({})", row.thread.role) };
+        println!("{}\t{}\t{}\t{}{role}", row.thread.id, row.group.label(), row.note, row.thread.title);
     }
     Ok(())
 }
