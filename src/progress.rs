@@ -314,6 +314,9 @@ pub fn hook(ctx: &Ctx, agent: &str) -> Result<()> {
         return Ok(());
     };
     let native = event["hook_event_name"].as_str().unwrap_or("").to_string();
+    if agent == "claude" && native == "Stop" {
+        return crate::guard::stop(ctx, &event);
+    }
     let event = normalize(harness, event);
     if !eligible(&event) {
         return Ok(());

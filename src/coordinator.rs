@@ -530,6 +530,7 @@ pub fn digest(ctx: &Ctx, project: &Project, prefix: &str) -> Result<(String, Vec
     let _ = writeln!(out, "Commands: {prefix}");
     let _ = writeln!(out, "Project: {slug} ({})", project.status());
     let _ = writeln!(out, "Folder: {}", project.dir().display());
+    out.push_str(&crate::away::digest_line(project));
 
     match project.read_project_md() {
         Ok((settings, _)) => {

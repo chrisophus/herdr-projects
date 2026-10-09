@@ -221,6 +221,7 @@ pub fn write_thread_items(project: &Project, state: &mut State, transitions: &[T
         if change.to == Group::WaitingOnYou {
             let reason = if !t.state_line.is_empty() && t.state_line != "needs you" { t.state_line.clone() } else { format!("needs you · {}", change.note) };
             let reason = if !t.activity.is_empty() && t.activity == crate::progress::WAITING { format!("needs you · {}", t.activity) } else { reason };
+            crate::ledger::thread_event(project, "needs-you", &t.id, &t.title, &[("reason", serde_json::json!(transition_event(change)))]);
             notifier.send(&t.id, &reason, crate::notify::Sound::Request, false);
         }
     }
@@ -239,6 +240,7 @@ pub fn write_thread_items(project: &Project, state: &mut State, transitions: &[T
             summary.push_str(&format!("; not everything was copied: {}", notes.join("; ")));
         }
         inbox::write(project, "thread-state", &t.id, "new report", &summary, "")?;
+        crate::ledger::thread_event(project, "report", &t.id, &t.title, &[]);
         notifier.send(&t.id, &format!("review · new report: {}", t.title), crate::notify::Sound::Done, false);
         let hash = t.report_hash.clone();
         thread::update(project, &t.id, |t| t.last_review_item_hash = hash)?;
@@ -499,6 +501,9 @@ pub fn pull_requests(ctx: &Ctx, project: &Project, state: &mut State, memory: &m
                 let events = pr_events(old.as_ref(), &summary, memory.gh_login.as_deref());
                 errors.extend(inbox::write(project, "pr", &t.id, pr_event(&events, &summary), &format!("{}: pull request {change}", thread_label(&t)), "").err());
                 let number = url.rsplit('/').next().unwrap_or("");
+                for what in &events {
+                    crate::ledger::thread_event(project, "pr", &t.id, &t.title, &[("pr", serde_json::json!(url)), ("what", serde_json::json!(what))]);
+                }
                 if merged {
                     notifier.send(&t.id, &format!("PR #{number} merged"), crate::notify::Sound::Done, false);
                 } else if events.contains(&"checks-failed") {
@@ -630,6 +635,7 @@ fn resolve_after_copy(ctx: &Ctx, project: &Project, t: &Thread, reason: &str, me
     let notes = threads::clean(ctx, project, &resolved, &threads::Clean { keep_worktree: false, copy_complete: complete, merged_head });
     let why = if reason == "auto" { "it was idle for `auto_resolve_days` and was resolved automatically; `thread resolve --reopen` undoes it".to_string() } else { format!("resolved ({reason})") };
     inbox::write(project, "thread-state", &t.id, "resolved", &format!("{}: {why}: {}", thread_label(t), notes.join("; ")), "")?;
+    crate::ledger::thread_event(project, "resolved", &t.id, &t.title, &[("reason", serde_json::json!(reason))]);
     Ok(true)
 }
 

@@ -9,7 +9,7 @@ use crate::paths::{self, Ctx, Env, SessionFlags};
 use crate::project::{self, Project, Status};
 use crate::runner::RealRunner;
 use crate::threads::{self, ResolveArgs, StartArgs};
-use crate::{actions, adopt, doctor, inbox, lifecycle, overview, routine, ticker};
+use crate::{actions, adopt, bearings, doctor, inbox, lifecycle, overview, routine, ticker};
 
 #[derive(Parser)]
 #[command(name = "herdr-projects", version = crate::VERSION, about = "Projects for herdr")]
@@ -39,6 +39,13 @@ impl From<SessionArgs> for SessionFlags {
             socket: args.socket,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, clap::ValueEnum)]
+enum AwayState {
+    On,
+    Off,
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -112,6 +119,19 @@ enum Command {
         /// Wait for Enter before exiting (only when on a terminal; used by the popup)
         #[arg(long)]
         wait: bool,
+    },
+    /// A short digest for a chat reply: what needs you, what is ready for review, what is in flight, what finished recently
+    Bearings {
+        slug: Option<String>,
+        /// Also write it to bearings/<date>.md in the project folder
+        #[arg(long)]
+        file: bool,
+    },
+    /// Away mode: re-notify what has waited on you too long and raise an alarm when the coordinator is not picking up its inbox
+    Away {
+        #[arg(value_enum)]
+        state: AwayState,
+        slug: Option<String>,
     },
     /// Show only one project's panes in the sidebar, sorted by attention
     Focus { slug: Option<String> },
@@ -693,6 +713,22 @@ pub fn run() -> Result<()> {
         },
         Command::Context { slug, peek } => coordinator::context(&ctx, &slug, peek),
         Command::Assignable { slug, refresh, check } => crate::assign::run(&ctx, &slug, refresh, check.as_deref()),
+        Command::Away { state, slug } => {
+            let slug = overview::require_slug(&ctx, slug.as_deref())?;
+            let project = Project::load(&ctx.root, &slug)?;
+            match state {
+                AwayState::On | AwayState::Off => {
+                    let away = crate::away::set(&project, state == AwayState::On)?;
+                    println!("{slug}: {}", if away.on { format!("away since {}", away.since) } else { "present".to_string() });
+                }
+                AwayState::Status => {
+                    let away = crate::away::load(&project);
+                    println!("{slug}: {}", if away.on { format!("away since {}", away.since) } else { "present".to_string() });
+                }
+            }
+            Ok(())
+        }
+        Command::Bearings { slug, file } => bearings::run(&ctx, slug.as_deref(), file),
         Command::Overview { slug, wait } => overview::run(&ctx, slug.as_deref(), wait),
         Command::Focus { slug } => overview::focus(&ctx, slug.as_deref()),
         Command::Unfocus { session } => overview::unfocus(&ctx, &session.into()),

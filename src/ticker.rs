@@ -997,6 +997,9 @@ fn tick_slow(ctx: &Ctx, project: &Project, seen: &Seen, memory: &mut Memory) -> 
 
     let notifier = crate::notify::Notifier::new(ctx, project);
     errors.extend(steps::write_thread_items(project, &mut state, &transitions, seen.session_lost, &copy_notes, &notifier).err());
+    for (subject, body) in crate::away::pass(project, now) {
+        notifier.send(&subject, &body, crate::notify::Sound::Request, false);
+    }
     errors.extend(steps::pull_requests(ctx, project, &mut state, memory, now));
     errors.extend(steps::resolve_merged(ctx, project, &mut state, now));
     errors.extend(routine_pass(ctx, project, &mut state, seen.coordinator));

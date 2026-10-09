@@ -27,6 +27,8 @@ pub struct Harness {
     file: &'static str,
     /// The harness's own names for SessionStart, UserPromptSubmit and PostToolUse.
     pub events: [&'static str; 3],
+    /// Events hooked beyond the three: the turn-end guard's `Stop` (Claude Code only).
+    extra_events: &'static [&'static str],
     /// Flat `{type, command, timeoutSec}` entries in a `version: 1` file of our
     /// own (Copilot CLI) instead of Claude Code's `{matcher, hooks: [...]}`.
     flat: bool,
@@ -37,17 +39,17 @@ pub struct Harness {
 }
 
 pub const HARNESSES: [Harness; 5] = [
-    Harness { agent: "claude", home_env: Some("CLAUDE_CONFIG_DIR"), home: ".claude", file: "settings.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], flat: false, timeout: 10, top_level_output: false },
-    Harness { agent: "codex", home_env: Some("CODEX_HOME"), home: ".codex", file: "hooks.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], flat: false, timeout: 10, top_level_output: false },
+    Harness { agent: "claude", home_env: Some("CLAUDE_CONFIG_DIR"), home: ".claude", file: "settings.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], extra_events: &["Stop"], flat: false, timeout: 10, top_level_output: false },
+    Harness { agent: "codex", home_env: Some("CODEX_HOME"), home: ".codex", file: "hooks.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], extra_events: &[], flat: false, timeout: 10, top_level_output: false },
     // Factory Droid: Claude Code's format, in its settings.json.
-    Harness { agent: "droid", home_env: None, home: ".factory", file: "settings.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], flat: false, timeout: 10, top_level_output: false },
+    Harness { agent: "droid", home_env: None, home: ".factory", file: "settings.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], extra_events: &[], flat: false, timeout: 10, top_level_output: false },
     // Gemini CLI: its own event names; timeouts in milliseconds.
-    Harness { agent: "gemini", home_env: None, home: ".gemini", file: "settings.json", events: ["SessionStart", "BeforeAgent", "AfterTool"], flat: false, timeout: 10_000, top_level_output: false },
+    Harness { agent: "gemini", home_env: None, home: ".gemini", file: "settings.json", events: ["SessionStart", "BeforeAgent", "AfterTool"], extra_events: &[], flat: false, timeout: 10_000, top_level_output: false },
     // Copilot CLI reads every file in hooks/, so ours is a file of its own.
     // PascalCase event names select its Claude-style payload (snake_case,
     // `hook_event_name`); prompt-submit output is dropped, but the event
     // still clears an answered question.
-    Harness { agent: "copilot", home_env: Some("COPILOT_HOME"), home: ".copilot", file: "hooks/herdr-projects.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], flat: true, timeout: 10, top_level_output: true },
+    Harness { agent: "copilot", home_env: Some("COPILOT_HOME"), home: ".copilot", file: "hooks/herdr-projects.json", events: ["SessionStart", "UserPromptSubmit", "PostToolUse"], extra_events: &[], flat: true, timeout: 10, top_level_output: true },
 ];
 
 pub const AGENTS: [&str; 5] = ["claude", "codex", "droid", "gemini", "copilot"];
@@ -197,7 +199,7 @@ pub fn hooks(input: &str, command: &str, remove: bool) -> Result<String> {
         None => obj.append("hooks", CstInputValue::Object(vec![])).object_value().unwrap(),
     };
     let expected = hook_entry(harness, command);
-    for event in harness.events {
+    for event in harness.events.iter().chain(harness.extra_events) {
         let entries = match hooks.get(event) {
             Some(p) => p.array_value().with_context(|| format!("`hooks.{event}` must be an array"))?,
             None if remove => continue,
@@ -571,7 +573,7 @@ mod tests {
         let added = hooks(original, CMD, false).unwrap();
         assert!(added.contains("// user's comment"));
         assert!(added.contains("keep"));
-        assert_eq!(added.matches("hook --agent claude").count(), 3);
+        assert_eq!(added.matches("hook --agent claude").count(), 4);
         assert_eq!(hooks(&added, CMD, false).unwrap(), added);
         let removed = hooks(&added, CMD, true).unwrap();
         assert!(!removed.contains("herdr-projects"));
@@ -584,7 +586,7 @@ mod tests {
         let old = hooks("{}", CMD, false).unwrap();
         let moved = hooks(&old, "'/new/herdr-projects' --root /r hook --agent claude", false).unwrap();
         assert!(!moved.contains("/p/herdr-projects"));
-        assert_eq!(moved.matches("/new/herdr-projects").count(), 3);
+        assert_eq!(moved.matches("/new/herdr-projects").count(), 4);
         let with_other = "{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":\"'/x/herdr-progress' hook --agent claude\",\"timeout\":10}]}]}}";
         let added = hooks(with_other, CMD, false).unwrap();
         assert!(added.contains("herdr-progress"));
@@ -658,7 +660,7 @@ mod tests {
         configure(&ctx, &options).unwrap();
         let configured = std::fs::read_to_string(claude.join("settings.json")).unwrap();
         assert!(configured.contains("// mine") && configured.contains("say done"));
-        assert_eq!(configured.matches("hook --agent claude").count(), 3);
+        assert_eq!(configured.matches("hook --agent claude").count(), 4);
         let codex_text = std::fs::read_to_string(codex.join("hooks.json")).unwrap();
         assert_eq!(codex_text.matches("hook --agent codex").count(), 3);
         assert_eq!(load_journal(&ctx.config_dir).len(), 2);

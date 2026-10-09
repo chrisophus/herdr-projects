@@ -199,7 +199,10 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
     }
 
     match place_and_brief(ctx, &project, &view, &id, false) {
-        Ok(thread) => Ok(thread),
+        Ok(thread) => {
+            crate::ledger::thread_event(&project, "dispatch", &thread.id, &thread.title, &[("profile", serde_json::json!(thread.profile)), ("kind", serde_json::json!(format!("{:?}", thread.kind).to_lowercase()))]);
+            Ok(thread)
+        }
         Err(error) => {
             // Nothing is cleaned up automatically; `thread restart` retries.
             let message = format!("{error:#}");
@@ -817,6 +820,7 @@ pub fn resolve(ctx: &Ctx, slug: &str, id: &str, args: &ResolveArgs) -> Result<()
         println!("  - {note}");
     }
     crate::inbox::write(&project, "thread-state", id, "resolved", &format!("{id} \"{}\" was resolved: {}", resolved.title, notes.join("; ")), "")?;
+    crate::ledger::thread_event(&project, "resolved", id, &resolved.title, &[("reason", serde_json::json!("manual"))]);
     Ok(())
 }
 
