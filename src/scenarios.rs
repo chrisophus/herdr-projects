@@ -2945,7 +2945,7 @@ fn a_pending_rename_closes_a_busy_agent_after_the_wait_and_reports_a_failure() {
 /// records every `sendMessage` body and numbers the sent messages from 500.
 fn fake_telegram(world: &World, updates: &str) -> Rc<RefCell<Vec<serde_json::Value>>> {
     std::fs::create_dir_all(world.home.path().join("cfg")).unwrap();
-    std::fs::write(world.home.path().join("cfg/config.toml"), "[telegram]\nbot_token = \"123:secret\"\nchat_id = 42\n").unwrap();
+    std::fs::write(world.home.path().join("cfg/config.toml"), "[telegram]\nbot_token = \"123:secret\"\nchat_id = 42\nnotify = \"always\"\n").unwrap();
     let sent = Rc::new(RefCell::new(Vec::new()));
     let pending = Rc::new(RefCell::new(Some(updates.to_string())));
     let log = sent.clone();
@@ -2967,6 +2967,25 @@ fn fake_telegram(world: &World, updates: &str) -> Rc<RefCell<Vec<serde_json::Val
         },
     );
     sent
+}
+
+#[test]
+fn notifications_go_to_the_phone_only_while_away_unless_notify_is_always() {
+    let (world, project, _) = finished_world("blocked");
+    let sent = fake_telegram(&world, "[]");
+    let ctx = world.ctx();
+    let notify = || crate::notify::Notifier::new(&ctx, &project).send("t-0001", "needs you", crate::notify::Sound::Request, false);
+    let cfg = world.home.path().join("cfg/config.toml");
+    std::fs::write(&cfg, "[telegram]\nbot_token = \"123:secret\"\nchat_id = 42\n").unwrap();
+    notify();
+    assert!(sent.borrow().is_empty(), "present: nothing goes to the phone");
+    crate::away::set(&project, true).unwrap();
+    notify();
+    assert_eq!(sent.borrow().len(), 1, "away: it does");
+    crate::away::set(&project, false).unwrap();
+    std::fs::write(&cfg, "[telegram]\nbot_token = \"123:secret\"\nchat_id = 42\nnotify = \"always\"\n").unwrap();
+    notify();
+    assert_eq!(sent.borrow().len(), 2, "always: even when present");
 }
 
 #[test]

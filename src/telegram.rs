@@ -43,6 +43,9 @@ pub const PROMPT_MARK: &str = "[telegram]";
 pub struct Config {
     pub bot_token: String,
     pub chat_id: i64,
+    /// `"away"` (the default): notifications go to the phone only while away
+    /// mode is on for the project. `"always"`: every one does.
+    pub notify: String,
 }
 
 /// The `[telegram]` table, `None` when it is absent or incomplete.
@@ -71,6 +74,11 @@ fn curl_quote(value: &str) -> String {
 }
 
 impl<'a> Bot<'a> {
+    /// Whether this project's notifications are mirrored to the chat now.
+    pub fn mirrors(&self, project: &Project) -> bool {
+        self.config.notify == "always" || crate::away::load(project).on
+    }
+
     pub fn new(config: Config, runner: &'a dyn Runner) -> Bot<'a> {
         Bot { config, runner }
     }
@@ -412,7 +420,7 @@ pub fn setup(ctx: &Ctx) -> Result<()> {
             path.display()
         );
     }
-    let bot = Bot::new(Config { bot_token: token, chat_id: 0 }, ctx.runner);
+    let bot = Bot::new(Config { bot_token: token, chat_id: 0, ..Config::default() }, ctx.runner);
     let me = bot.call("getMe", &json!({}))?;
     let updates = bot.call("getUpdates", &json!({"timeout": 0, "allowed_updates": ["message"]}))?;
     let chat = updates
@@ -428,7 +436,7 @@ pub fn setup(ctx: &Ctx) -> Result<()> {
     doc["telegram"]["chat_id"] = toml_edit::value(chat_id);
     std::fs::create_dir_all(&ctx.config_dir)?;
     project::write_atomic(&path, doc.to_string().as_bytes())?;
-    let bot = Bot::new(Config { bot_token: bot.config.bot_token, chat_id }, ctx.runner);
+    let bot = Bot::new(Config { bot_token: bot.config.bot_token, chat_id, ..Config::default() }, ctx.runner);
     bot.send("herdr-projects is connected. Write /help for how to talk to your projects.", None, false)?;
     println!("Telegram: chat {chat_id} ({who}) written to {}; the ticker picks it up on its next tick.", path.display());
     Ok(())
@@ -495,7 +503,7 @@ mod tests {
         std::fs::write(dir.path().join("config.toml"), "[telegram]\nbot_token = \"t\"\n").unwrap();
         assert_eq!(load_config(dir.path()).unwrap(), None);
         std::fs::write(dir.path().join("config.toml"), "[telegram]\nbot_token = \"t\"\nchat_id = 42\n").unwrap();
-        assert_eq!(load_config(dir.path()).unwrap(), Some(Config { bot_token: "t".into(), chat_id: 42 }));
+        assert_eq!(load_config(dir.path()).unwrap(), Some(Config { bot_token: "t".into(), chat_id: 42, notify: String::new() }));
     }
 
     #[test]

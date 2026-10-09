@@ -39,7 +39,7 @@ impl<'a> Notifier<'a> {
     pub fn new(ctx: &'a Ctx, project: &Project) -> Notifier<'a> {
         let settings = project.read_project_md().map(|(s, _)| s).unwrap_or_default();
         let herdr = project.coordinator().filter(|c| !c.socket.is_empty() && std::path::Path::new(&c.socket).exists()).map(|c| Herdr::new(ctx.env.herdr_bin(), c.socket, ctx.runner));
-        let telegram = crate::telegram::Bot::configured(ctx);
+        let telegram = crate::telegram::Bot::configured(ctx).filter(|bot| bot.mirrors(project));
         Notifier { herdr, telegram, root: &ctx.root, slug: project.slug.clone(), name: project::display_name(&settings.name, &project.slug), mute: settings.mute }
     }
 
