@@ -9,7 +9,7 @@ use crate::paths::{self, Ctx, Env, SessionFlags};
 use crate::project::{self, Project, Status};
 use crate::runner::RealRunner;
 use crate::threads::{self, ResolveArgs, StartArgs};
-use crate::{actions, adopt, bearings, doctor, inbox, lifecycle, overview, routine, ticker};
+use crate::{actions, adopt, bearings, doctor, inbox, lifecycle, overview, routine, telegram, ticker};
 
 #[derive(Parser)]
 #[command(name = "herdr-projects", version = crate::VERSION, about = "Projects for herdr")]
@@ -314,6 +314,11 @@ enum Command {
         #[command(subcommand)]
         command: TickerCommand,
     },
+    /// Telegram: notifications on your phone, and messages to a coordinator
+    Telegram {
+        #[command(subcommand)]
+        command: TelegramCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -588,6 +593,21 @@ enum SafetyCommand {
         /// The value (arguments for *_agent_args, none for an empty list), or `default`
         #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
         value: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TelegramCommand {
+    /// With bot_token in config.toml's [telegram] table, find your chat with the bot and write its chat_id
+    Setup,
+    /// Send one test message
+    Test,
+    /// Send a coordinator's answer to the user on Telegram
+    Send {
+        slug: String,
+        /// The text; `-` reads standard input
+        #[arg(long, value_name = "FILE")]
+        text_file: String,
     },
 }
 
@@ -935,6 +955,11 @@ pub fn run() -> Result<()> {
             TickerCommand::Run => ticker::run(&ctx),
             TickerCommand::Stop => ticker::stop(&ctx.root),
             TickerCommand::Status => ticker::status(&ctx.root),
+        },
+        Command::Telegram { command } => match command {
+            TelegramCommand::Setup => telegram::setup(&ctx),
+            TelegramCommand::Test => telegram::test(&ctx),
+            TelegramCommand::Send { slug, text_file } => telegram::send(&ctx, &slug, &read_text(&text_file)?),
         },
     }
 }

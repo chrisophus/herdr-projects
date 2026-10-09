@@ -2940,3 +2940,91 @@ fn a_pending_rename_closes_a_busy_agent_after_the_wait_and_reports_a_failure() {
     assert!(!path.exists() && project.dir().is_dir());
     assert!(crate::inbox::unhandled(&project).iter().any(|i| i.event == "rename failed"));
 }
+
+/// A fake Bot API behind `curl`: answers `getUpdates` with `updates` once,
+/// records every `sendMessage` body and numbers the sent messages from 500.
+fn fake_telegram(world: &World, updates: &str) -> Rc<RefCell<Vec<serde_json::Value>>> {
+    std::fs::create_dir_all(world.home.path().join("cfg")).unwrap();
+    std::fs::write(world.home.path().join("cfg/config.toml"), "[telegram]\nbot_token = \"123:secret\"\nchat_id = 42\n").unwrap();
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    let pending = Rc::new(RefCell::new(Some(updates.to_string())));
+    let log = sent.clone();
+    world.runner.on_fn(
+        |cmd| cmd.program == "curl",
+        move |cmd| {
+            let config = cmd.stdin.clone().unwrap_or_default();
+            assert!(!cmd.args.iter().any(|a| a.contains("secret")), "the token is never an argument");
+            let data = config.lines().find_map(|l| l.strip_prefix("data-binary = ")).unwrap();
+            let data = data[1..data.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\");
+            let body: serde_json::Value = serde_json::from_str(&data).unwrap();
+            if config.contains("/getUpdates") {
+                let updates = pending.borrow_mut().take().unwrap_or_else(|| "[]".into());
+                return Ok(ok(&format!(r#"{{"ok":true,"result":{updates}}}"#)));
+            }
+            assert!(config.contains("/sendMessage"));
+            log.borrow_mut().push(body);
+            Ok(ok(&format!(r#"{{"ok":true,"result":{{"message_id":{}}}}}"#, 499 + log.borrow().len())))
+        },
+    );
+    sent
+}
+
+#[test]
+fn telegram_messages_from_the_users_chat_reach_an_idle_coordinator_and_notifications_go_back() {
+    let (world, project, _) = finished_world("blocked");
+    thread::update(&project, "t-0001", |t| {
+        t.last_state = "blocked".into();
+        t.last_state_change = "2026-01-01T00:00:00Z".into();
+    })
+    .unwrap();
+    let updates = r#"[
+        {"update_id":7,"message":{"message_id":1,"chat":{"id":666},"text":"from a stranger"}},
+        {"update_id":8,"message":{"message_id":2,"chat":{"id":42},"text":"start the docs thread"}}
+    ]"#;
+    let sent = fake_telegram(&world, updates);
+    let ctx = world.ctx();
+    let mut memory = Memory::new(&ctx);
+    // The first tick discovers the coordinator (and mirrors the thread that
+    // needs you).
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+
+    // The one active project gets the message; the stranger's is dropped.
+    assert!(crate::telegram::poll(&ctx).is_empty());
+    let queue = crate::telegram::load_queue(&project);
+    assert_eq!(queue.pending.len(), 1);
+    assert_eq!(queue.pending[0].text, "start the docs thread");
+    assert_eq!(crate::telegram::load_root_state(&world.root).offset, 9);
+
+    // Not delivered until the coordinator has been idle for a minute.
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    let prompts = |w: &World| w.runner.calls.borrow().iter().filter(|c| c.display().contains("agent prompt")).map(|c| c.args.last().unwrap().clone()).filter(|a| !a.starts_with("[hp inbox]")).collect::<Vec<_>>();
+    assert!(prompts(&world).is_empty());
+    idle_for_a_minute(&project);
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    let delivered = prompts(&world);
+    assert_eq!(delivered.len(), 1, "{delivered:?}");
+    assert!(delivered[0].starts_with("[telegram] start the docs thread\n\n"));
+    assert!(delivered[0].contains("telegram send demo --text-file -"));
+    assert!(crate::telegram::load_queue(&project).pending.is_empty());
+    // The nudge for the inbox waits: the coordinator was just prompted.
+    assert_eq!(world.runner.count("[hp inbox]"), 0);
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    assert_eq!(prompts(&world).len(), 1);
+
+    let sent = sent.borrow();
+    // The thread that needs you was mirrored, with sound; the delivery was
+    // acknowledged silently as a reply to the user's message.
+    let texts: Vec<&str> = sent.iter().map(|b| b["text"].as_str().unwrap()).collect();
+    assert!(texts.contains(&"Demo · t-0001\nneeds you · blocked"), "{texts:?}");
+    let needs = sent.iter().find(|b| b["text"] == "Demo · t-0001\nneeds you · blocked").unwrap();
+    assert_eq!(needs["disable_notification"], false);
+    assert_eq!(needs["chat_id"], 42);
+    let ack = sent.iter().find(|b| b["text"] == "→ Demo").unwrap();
+    assert_eq!(ack["reply_parameters"]["message_id"], 2);
+    assert_eq!(ack["disable_notification"], true);
+    // Every sent message routes a reply back to the project.
+    let state = crate::telegram::load_root_state(&world.root);
+    assert_eq!(state.routes.len(), sent.len());
+    assert!(state.routes.iter().all(|(_, slug)| slug == "demo"));
+    assert_eq!(state.last, "demo");
+}
