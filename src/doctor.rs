@@ -121,6 +121,22 @@ fn report(
         ),
         Err(_) => check(&mut out, None, "gh auth", "gh is not installed".into()),
     }
+    match crate::telegram::load_config(config_dir) {
+        Ok(None) => {}
+        Ok(Some(config)) => {
+            let chat = config.chat_id;
+            match crate::telegram::Bot::new(config, runner).call("getMe", &serde_json::json!({})) {
+                Ok(me) => check(&mut out, Some(true), "telegram", format!("@{} to chat {chat}", me["username"].as_str().unwrap_or("?"))),
+                Err(error) => check(&mut out, None, "telegram", format!("{error:#}; notifications and messages are not passed on")),
+            }
+            use std::os::unix::fs::PermissionsExt as _;
+            let file = config_dir.join("config.toml");
+            if std::fs::metadata(&file).is_ok_and(|m| m.permissions().mode() & 0o077 != 0) {
+                check(&mut out, None, "telegram token", format!("{} holds the bot token and other users can read it; run `chmod 600 {}`", file.display(), file.display()));
+            }
+        }
+        Err(error) => check(&mut out, None, "telegram", format!("{error:#}")),
+    }
 
     if root.is_dir() {
         let count = project::list_slugs(root).len();

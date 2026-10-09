@@ -289,6 +289,9 @@ pub fn tick(ctx: &Ctx, log: &Log, memory: &mut Memory) -> bool {
     let mut reachable = Vec::new();
     let mut unreachable = Vec::new();
     let mut sessions = Sessions::new(ctx);
+    for error in crate::telegram::poll(ctx) {
+        log.line(&format!("telegram: {error:#}"));
+    }
     for slug in project::list_slugs(&ctx.root) {
         let Ok(project) = Project::load(&ctx.root, &slug) else {
             continue;
@@ -704,7 +707,14 @@ fn tick_cheap(ctx: &Ctx, project: &Project, sessions: &mut Sessions) -> Result<O
         let mut state = steps::load_state(project);
         let before = state.nudged.clone();
         let target = coordinator::nudge_target(&coordinators, jiff::Timestamp::now());
-        let ready_pane = target.map(|c| c.pane_id.as_str());
+        let mut ready_pane = target.map(|c| c.pane_id.as_str());
+        // The user's own Telegram messages first; a coordinator that just got
+        // them is busy, so the nudge waits for a later tick.
+        match crate::telegram::deliver(ctx, project, &herdr, ready_pane) {
+            Ok(true) => ready_pane = None,
+            Ok(false) => {}
+            Err(error) => first_error = first_error.or(Some(error.context("telegram"))),
+        }
         if let Err(error) = steps::nudge(project, &mut state, &settings, &herdr, ready_pane) {
             first_error = first_error.or(Some(error.context("nudge")));
         }

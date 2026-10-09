@@ -28,6 +28,7 @@ mod sidebar;
 mod spaces;
 mod steps;
 mod sweep;
+mod telegram;
 mod thread;
 mod threads;
 mod ticker;

@@ -65,6 +65,7 @@ Every thread works from `<its working directory>/.herdr-project/<project>-<id>/`
 | `open-file <path>`, `open-url <url>` | Open a text file in a new tab with `$EDITOR`, or a PR in the browser. |
 | `ticker start \| run \| stop \| status`, `doctor [--fix]`, `skill` | Housekeeping. |
 | `update [--check]` | Update to the newest release: fetch, rebuild, `doctor --fix`, restart the ticker. |
+| `telegram setup \| test`, `telegram send <project> --text-file F` | Connect a Telegram bot; the coordinator's answer to the user on Telegram (see Telegram). |
 
 ## Roles
 
@@ -132,7 +133,8 @@ The coordinator runs the binary every turn, so allow-list it in your agent by su
   "Bash(<binary> --root <root> thread prompt:*)",
   "Bash(<binary> --root <root> thread next:*)",
   "Bash(<binary> --root <root> thread ack:*)",
-  "Bash(<binary> --root <root> thread restart:*)"
+  "Bash(<binary> --root <root> thread restart:*)",
+  "Bash(<binary> --root <root> telegram send:*)"
 ] } }
 ```
 
@@ -152,6 +154,29 @@ The coordinator runs the binary every turn, so allow-list it in your agent by su
 
 - **Notifications** go out once per event, titled `<Project> · <thread>`: `needs you · ...` with Herdr's request sound; a new report or a merged pull request with the done sound; failed checks, review activity and due routines without sound. `mute = true` silences a project except for errors (a broken routine file, `gh` failing for ten minutes).
 - **Nudges** (`nudge = true`, the default for new projects) prompt a coordinator with `[hp ticker] new inbox items, run context` once a set of new inbox items arrives. On Herdr 0.9.1 a prompt merges with text you have half-typed, so the ticker only prompts a coordinator whose state has not changed and been idle for 60 seconds, and picks the one that changed most recently when several qualify. `nudge = false` turns this off; notifications still come.
+
+
+## Telegram
+
+Optional. Notifications also go to a Telegram chat, and what you write there reaches a project's coordinator.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+2. Add it to `~/.config/herdr-projects/config.toml` (the file `doctor` names as the config dir) and make the file private with `chmod 600`:
+
+   ```toml
+   [telegram]
+   bot_token = "123456:ABC..."
+   ```
+3. Send your bot any message from your own account, then run `herdr-projects telegram setup`. It finds that private chat, writes `chat_id` under `[telegram]` and sends a confirmation. `herdr-projects telegram test` sends one more message; `doctor` checks the token.
+
+How it behaves:
+
+- **Out**: every notification is also sent to the chat as `<Project> · <thread>` plus the body. Failed checks, review activity and due routines arrive silently; `mute = true` silences a project here too, except for errors.
+- **In**: the ticker reads new messages every tick (15 seconds). Only messages from the configured `chat_id` are heard; anything else is ignored. A message goes to a project by replying to one of its messages, with `/to <slug> <message>`, to the only active project when there is one, or else to the project you last wrote to. `/to <slug>` alone switches project, `/projects` lists projects and what needs you, `/help` explains.
+- Messages wait in `.state/telegram.json` and reach the coordinator as one prompt starting `[telegram]`, under the same rule as a nudge: only once the coordinator has been idle for a minute, so they never merge with text half-typed in its pane. The bot answers `→ <Project>` when a message is delivered, and says so at once when the project has no coordinator running or is paused.
+- The coordinator answers with `herdr-projects telegram send <slug> --text-file -`; replying to that answer goes back to the same project. Add `telegram send` to its allow-list (above), or every answer waits on a permission prompt in a pane you are not looking at.
+- The ticker exits when no Herdr session has been reachable for five minutes; messages sent meanwhile are read once it runs again.
+- API calls go through `curl` with the token on standard input, never on the command line. Use a private chat with the bot: anyone in a group chat set as `chat_id` could instruct the coordinator.
 
 ## Routines
 
