@@ -44,7 +44,7 @@ Say what you want once. The coordinator proposes threads and waits for your go-a
 
 ### 💬 Know when a thread needs an answer
 
-Agents report their own progress, so a thread that asked you something shows `needs you` even when it looks idle, and you get a notification that names the project and the thread, in Herdr and, if you connect a bot, on Telegram, where you can also write back to the coordinator ([setup](docs/operations.md#telegram)). A background ticker follows pull requests: failing checks and review comments go back to the thread to fix, and a merged pull request resolves the thread and removes its worktree and branch once its agent has finished (it may still be tagging or deploying).
+Agents report their own progress, so a thread that asked you something shows `needs you` even when it looks idle, and you get a notification that names the project and the thread, in Herdr and, if you connect a bot, on Telegram, where you can also write back to the coordinator ([setup](docs/operations.md#telegram)). A background ticker follows pull requests: failing checks and review comments go back to the thread to fix, and a merged pull request resolves the thread and removes its worktree and branch once its agent has finished (it may still be tagging or deploying). Ask for a watcher and one more thread stays open to read the code and CI across all the threads. It catches what no single thread sees, such as two branches that will conflict or a red default branch, so the coordinator never has to read the code itself ([how](docs/operations.md#the-watcher)).
 
 ## Open your first project in three steps
 

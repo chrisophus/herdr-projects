@@ -80,6 +80,8 @@ pub struct StartArgs {
     pub kind: Option<Kind>,
     pub base: Option<String>,
     pub task: String,
+    /// The project's watcher (`--watch`): a tab, one per project.
+    pub watch: bool,
 }
 
 /// The profile a thread starts with.
@@ -147,6 +149,14 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
     if args.task.trim().is_empty() {
         bail!("the task is empty");
     }
+    if args.watch {
+        if args.machine.is_some() || args.kind.is_some_and(|k| k != Kind::Tab) {
+            bail!("a watcher runs as a tab in the project's own workspace; leave out --machine and --kind");
+        }
+        if let Some(other) = thread::list(&project).iter().find(|t| t.watch && t.status != Status::Resolved) {
+            bail!("{} is already this project's watcher; prompt it, or resolve it first", other.id);
+        }
+    }
     let (settings, _) = project.read_project_md()?;
     // Without a running ticker nothing launches.
     ticker::start(ctx)?;
@@ -174,7 +184,8 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
         eprintln!("warning: {repo} on {machine} is not listed in `repos` in PROJECT.md");
     }
 
-    let open_count = thread::list(&project).iter().filter(|t| t.status == Status::Open || t.status == Status::Starting).count();
+    // The watcher does not take a worker's slot.
+    let open_count = thread::list(&project).iter().filter(|t| !t.watch && (t.status == Status::Open || t.status == Status::Starting)).count();
     if open_count as u32 >= settings.max_parallel_threads {
         eprintln!(
             "warning: {open_count} threads are already open; max_parallel_threads is {}",
@@ -183,7 +194,7 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
     }
 
     let profile = thread_profile(ctx, &project, &machine, args.profile.as_deref())?;
-    let kind = placement(args.kind, !repo.is_empty(), !machine.is_empty())?;
+    let kind = if args.watch { Kind::Tab } else { placement(args.kind, !repo.is_empty(), !machine.is_empty())? };
     let record = thread::allocate(&project, |t| {
         t.title = args.title.trim().to_string();
         t.kind = kind;
@@ -191,6 +202,7 @@ pub fn start(ctx: &Ctx, slug: &str, args: StartArgs) -> Result<Thread> {
         t.machine = machine.clone();
         profile.apply(t);
         t.base = args.base.clone().unwrap_or_default();
+        t.watch = args.watch;
     })?;
     let id = record.id.clone();
     {
@@ -526,6 +538,16 @@ pub fn restart(ctx: &Ctx, slug: &str, id: &str, profile: Option<&str>) -> Result
 /// Sends a follow-up. The one sender that does not use the ready-for-a-prompt
 /// predicate: agents queue a message that arrives while they work.
 pub fn prompt(ctx: &Ctx, slug: &str, id: &str, text: &str) -> Result<String> {
+    send(ctx, slug, id, text, true)
+}
+
+/// The watcher's wake-up: sent like a prompt but not recorded in its task
+/// file, which would otherwise grow with every wake and be re-read on restart.
+pub fn prompt_unrecorded(ctx: &Ctx, slug: &str, id: &str, text: &str) -> Result<String> {
+    send(ctx, slug, id, text, false)
+}
+
+fn send(ctx: &Ctx, slug: &str, id: &str, text: &str, recorded: bool) -> Result<String> {
     let project = Project::load(&ctx.root, slug)?;
     let record = thread::load(&project, id)?;
     if text.trim().is_empty() {
@@ -564,7 +586,9 @@ pub fn prompt(ctx: &Ctx, slug: &str, id: &str, text: &str) -> Result<String> {
     }
     // Written after the send, so the task file never claims a prompt that was
     // refused; a restarted thread re-reads it with its task.
-    thread::append_follow_up(&project, id, text)?;
+    if recorded {
+        thread::append_follow_up(&project, id, text)?;
+    }
     if let Err(error) = sent {
         bail!(
             "prompt_unconfirmed: the text was typed into {id}'s pane ({}) but the agent was not seen starting on it ({error}). Do not send it again: `thread read` shows whether it sits in the input box, and `thread keys {slug} {id} enter` submits it",

@@ -1012,6 +1012,7 @@ fn tick_slow(ctx: &Ctx, project: &Project, seen: &Seen, memory: &mut Memory) -> 
     }
     errors.extend(steps::pull_requests(ctx, project, &mut state, memory, now));
     errors.extend(steps::resolve_merged(ctx, project, &mut state, now));
+    errors.extend(crate::watch::pass(ctx, project, &mut state.watch, now));
     errors.extend(routine_pass(ctx, project, &mut state, seen.coordinator));
     if let Ok((settings, _)) = project.read_project_md() {
         errors.extend(steps::auto_resolve(ctx, project, &settings, memory, now));

@@ -590,6 +590,7 @@ pub fn digest(ctx: &Ctx, project: &Project, prefix: &str) -> Result<(String, Vec
     for row in open {
         let t = &row.thread;
         let place = if t.repo.is_empty() { "no repo".to_string() } else { t.repo.clone() };
+        let place = if t.watch { format!("{place} — watcher") } else { place };
         let _ = writeln!(out, "- {} [{}] ({}) {} — {} — {}", t.id, row.group.label(), row.note, t.title, place, if t.profile.is_empty() { &t.agent } else { &t.profile });
         for line in crate::thread::all_next(project, &t.id) {
             let _ = writeln!(out, "  next: {line}");

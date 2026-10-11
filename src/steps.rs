@@ -49,6 +49,8 @@ pub struct State {
     pub session_item_written: bool,
     /// thread id -> when the ticker first saw its pull request merged.
     pub merged_seen: BTreeMap<String, String>,
+    /// What the watcher has not been told yet.
+    pub watch: crate::watch::State,
 }
 
 pub fn load_state(project: &Project) -> State {
@@ -202,6 +204,11 @@ pub fn write_thread_items(project: &Project, state: &mut State, transitions: &[T
         let Ok(t) = thread::load(project, &change.id) else {
             continue;
         };
+        // The watcher goes idle after every wake; only a watcher that needs
+        // someone is news.
+        if t.watch && change.to != Group::WaitingOnYou {
+            continue;
+        }
         let mut summary = format!("{} is now {} ({})", thread_label(&t), change.to.label(), change.note);
         if change.to == Group::WaitingOnYou && !t.pane_id.is_empty() && change.note == "blocked" {
             // A screen waits for a key press (trust dialog, question menu,
@@ -240,6 +247,9 @@ pub fn write_thread_items(project: &Project, state: &mut State, transitions: &[T
             summary.push_str(&format!("; not everything was copied: {}", notes.join("; ")));
         }
         inbox::write(project, "thread-state", &t.id, "new report", &summary, "")?;
+        if !t.watch {
+            crate::watch::note(&mut state.watch, format!("{}: new report", t.id));
+        }
         crate::ledger::thread_event(project, "report", &t.id, &t.title, &[]);
         notifier.send(&t.id, &format!("review · new report: {}", t.title), crate::notify::Sound::Done, false);
         let hash = t.report_hash.clone();
@@ -511,6 +521,14 @@ pub fn pull_requests(ctx: &Ctx, project: &Project, state: &mut State, memory: &m
                 } else if events.contains(&"review") {
                     notifier.send(&t.id, &format!("PR #{number} · new review activity"), crate::notify::Sound::None, false);
                 }
+                if !t.watch {
+                    let recovered = old.as_ref().is_some_and(|o| !o.failing_checks.is_empty()) && summary.failing_checks.is_empty();
+                    if !events.is_empty() {
+                        crate::watch::note(&mut state.watch, format!("{}: {} ({url})", t.id, pr_event(&events, &summary)));
+                    } else if recovered {
+                        crate::watch::note(&mut state.watch, format!("{}: PR checks passing again ({url})", t.id));
+                    }
+                }
                 errors.extend(fire_pr_routines(ctx, project, &t, &url, &events, &summary));
                 state.prs.insert(t.id.clone(), summary);
             }
@@ -649,7 +667,8 @@ pub fn auto_resolve(ctx: &Ctx, project: &Project, settings: &Settings, memory: &
         return errors;
     }
     for t in thread::list(project) {
-        if t.status != Status::Open || t.last_group != Group::Idle.token() {
+        // The watcher is idle between wakes by design.
+        if t.status != Status::Open || t.last_group != Group::Idle.token() || t.watch {
             continue;
         }
         // The later of the three reference times is the smallest elapsed time.

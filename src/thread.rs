@@ -128,6 +128,9 @@ pub struct Thread {
     /// The agent's own last activity and percent (local threads).
     pub activity: String,
     pub percent: Option<u8>,
+    /// The project's watcher (`thread start --watch`): a long-running thread
+    /// the ticker wakes with what happened across the other threads.
+    pub watch: bool,
 }
 
 impl Thread {
@@ -334,6 +337,8 @@ pub struct BriefInput<'a> {
     /// `<binary> --root <root>` for `report`; empty for a remote thread,
     /// whose machine has its own binary (or none).
     pub report_prefix: &'a str,
+    /// The watcher's role is added after the thread brief.
+    pub watch: bool,
 }
 
 /// The header block every brief opens with: what the worker acts on, never
@@ -365,6 +370,10 @@ pub fn compose_brief(input: &BriefInput) -> String {
     brief.push('\n');
     brief.push_str(include_str!("../skill/THREAD.md").trim_end());
     brief.push_str("\n\n");
+    if input.watch {
+        brief.push_str(include_str!("../skill/WATCHER.md").trim_end());
+        brief.push_str("\n\n");
+    }
     if input.restart {
         brief.push_str(
             "**A previous attempt at this task exists on this branch.** Read its report at the report path below first, look at what is already on the branch, and continue from there.\n\n",
@@ -451,6 +460,7 @@ pub fn brief_for(project: &Project, thread: &Thread, task: &str, restart: bool) 
         report_path: &thread.report_path(),
         library_path: &thread.library_path(),
         report_prefix: &prefix,
+        watch: thread.watch,
     }))
 }
 
@@ -1177,6 +1187,7 @@ mod tests {
             report_path: "/wt/.herdr-project/demo-t-0001/report.md",
             library_path: "/wt/.herdr-project/demo-t-0001/library",
             report_prefix: "/bin/hp --root /r",
+            watch: false,
         };
         let brief = compose_brief(&input);
         let pos = |needle: &str| brief.find(needle).unwrap_or_else(|| panic!("missing {needle}"));
@@ -1203,6 +1214,16 @@ mod tests {
         assert!(!fresh.contains("previous attempt"));
         assert!(fresh.contains("- Goal: (none set)\n- Repos: (none)\n"));
         assert!(fresh.contains("on the home machine; not copied"));
+        assert!(!brief.contains("# Watcher"));
+
+        // The watcher's role follows the thread brief, before the project's instructions.
+        let watcher = compose_brief(&BriefInput { watch: true, ..input });
+        assert!(pos_in(&watcher, "# Thread brief") < pos_in(&watcher, "# Watcher"));
+        assert!(pos_in(&watcher, "# Watcher") < pos_in(&watcher, "Always run the tests."));
+    }
+
+    fn pos_in(text: &str, needle: &str) -> usize {
+        text.find(needle).unwrap_or_else(|| panic!("missing {needle}"))
     }
 
     #[test]
