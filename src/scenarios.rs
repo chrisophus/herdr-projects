@@ -189,6 +189,7 @@ fn thread_start_returns_without_an_agent_and_the_ticker_launches_then_prompts() 
             kind: None,
             base: None,
             task: "Do the thing.".into(),
+            watch: false,
         },
     )
     .unwrap();
@@ -582,7 +583,7 @@ fn thread_start_is_refused_when_paused() {
     let world = World::new();
     let project = world.project("demo", "a.sock");
     project.set_status(project::Status::Paused).unwrap();
-    let args = StartArgs { title: "x".into(), repo: None, machine: None, profile: None, kind: None, base: None, task: "t".into() };
+    let args = StartArgs { title: "x".into(), repo: None, machine: None, profile: None, kind: None, base: None, task: "t".into(), watch: false };
     let error = threads::start(&world.ctx(), "demo", args).unwrap_err().to_string();
     assert!(error.contains("paused"), "{error}");
     assert!(thread::list(&project).is_empty());
@@ -606,7 +607,7 @@ fn thread_start_and_open_refuse_profiles_off_the_allow_list() {
     let project = world.project("demo", "a.sock");
     write_profiles(&world, PROFILES);
     for bad in ["deep", "codex", "nope"] {
-        let args = StartArgs { title: "x".into(), repo: None, machine: None, profile: Some(bad.into()), kind: Some(Kind::Tab), base: None, task: "t".into() };
+        let args = StartArgs { title: "x".into(), repo: None, machine: None, profile: Some(bad.into()), kind: Some(Kind::Tab), base: None, task: "t".into(), watch: false };
         let error = threads::start(&world.ctx(), "demo", args).unwrap_err().to_string();
         assert!(error.contains("not allowed for threads") || error.contains("no profile `nope`"), "{error}");
         let options = coordinator::OpenOptions { session: Default::default(), rebind: false, profile: Some(bad.into()), new: true, here: false };
@@ -1748,7 +1749,7 @@ fn a_remote_thread_blocked_at_a_poll_is_waiting_on_you_at_once() {
 fn a_remote_thread_without_a_repo_is_refused() {
     let world = World::new();
     world.project("demo", "a.sock");
-    let args = StartArgs { title: "x".into(), repo: None, machine: Some("box".into()), profile: None, kind: None, base: None, task: "t".into() };
+    let args = StartArgs { title: "x".into(), repo: None, machine: Some("box".into()), profile: None, kind: None, base: None, task: "t".into(), watch: false };
     assert!(threads::start(&world.ctx(), "demo", args).unwrap_err().to_string().contains("needs --repo"));
 }
 
@@ -1931,7 +1932,7 @@ fn a_tab_thread_with_a_repo_gets_its_brief_seconds_after_its_agent_is_ready() {
     world.runner.on("agent prompt", ok(r#"{"result":{}}"#));
     *world.panes.borrow_mut() = format!("[{}]", world.coordinator_pane(&project));
     let ctx = world.ctx();
-    let args = StartArgs { title: "Clean up".into(), repo: Some(repo.to_string_lossy().into_owned()), machine: None, profile: None, kind: Some(Kind::Tab), base: None, task: "Tidy.".into() };
+    let args = StartArgs { title: "Clean up".into(), repo: Some(repo.to_string_lossy().into_owned()), machine: None, profile: None, kind: Some(Kind::Tab), base: None, task: "Tidy.".into(), watch: false };
     let t = threads::start(&ctx, "demo", args).unwrap();
     assert_eq!((t.kind, t.cwd.as_str(), t.prompt_pending), (Kind::Tab, cwd.as_str(), true));
 
@@ -1987,7 +1988,7 @@ fn a_tab_thread_gets_a_brief_with_the_project_header_and_prompts_are_recorded() 
     // Delegated from TASKS.md: the task's notes reach the brief.
     std::fs::write(project.dir().join("TASKS.md"), "# Tasks\n\n## Backlog\n- [ ] Research (agent)\n  Start with the 2025 papers.\n").unwrap();
     let task = crate::tasks::delegated(&crate::tasks::read(&project.dir()), "Research", "Look into it.").unwrap();
-    let t = threads::start(&ctx, "demo", StartArgs { title: "Research".into(), repo: None, machine: None, profile: None, kind: Some(Kind::Tab), base: None, task }).unwrap();
+    let t = threads::start(&ctx, "demo", StartArgs { title: "Research".into(), repo: None, machine: None, profile: None, kind: Some(Kind::Tab), base: None, task, watch: false }).unwrap();
     assert_eq!(t.kind, Kind::Tab);
     let brief = std::fs::read_to_string(Path::new(&t.thread_dir).join("brief.md")).unwrap();
     assert!(brief.contains("Look into it.\n\n## Notes from the task list\n\nStart with the 2025 papers."), "{brief}");
@@ -2222,7 +2223,7 @@ fn a_tab_thread_of_a_coordinator_running_in_another_workspace_opens_the_project_
     h.open(true, false).unwrap();
     let folder = h.project.dir().join("threads/t-0001");
     h.world.runner.on("pane get", ok(r#"{"result":{"pane":{"cwd":""}}}"#));
-    let args = |title: &str| StartArgs { title: title.into(), repo: None, machine: None, profile: None, kind: Some(Kind::Tab), base: None, task: "Look.".into() };
+    let args = |title: &str| StartArgs { title: title.into(), repo: None, machine: None, profile: None, kind: Some(Kind::Tab), base: None, task: "Look.".into(), watch: false };
     let t = threads::start(&h.world.ctx(), "demo", args("Research")).unwrap();
     let calls = h.world.runner.calls.borrow();
     let create = calls.iter().filter(|c| c.display().contains("workspace create")).last().unwrap();
@@ -2849,7 +2850,7 @@ fn a_coordinator_renames_its_own_project_and_reopens_in_the_new_folder() {
     assert!(old.is_dir());
     let pending = crate::rename::pending(&world.root, "scratch").unwrap();
     assert!(pending.reopen && pending.to == "home");
-    let start = threads::start(&ctx, "scratch", StartArgs { title: "x".into(), repo: None, machine: None, profile: None, kind: None, base: None, task: "y".into() });
+    let start = threads::start(&ctx, "scratch", StartArgs { title: "x".into(), repo: None, machine: None, profile: None, kind: None, base: None, task: "y".into(), watch: false });
     assert!(start.unwrap_err().to_string().contains("being renamed"));
 
     // While it works (finishing its reply), nothing happens.
@@ -3027,4 +3028,106 @@ fn telegram_messages_from_the_users_chat_reach_an_idle_coordinator_and_notificat
     assert_eq!(state.routes.len(), sent.len());
     assert!(state.routes.iter().all(|(_, slug)| slug == "demo"));
     assert_eq!(state.last, "demo");
+}
+
+/// The watcher: started as a tab with its role in the brief, one per project,
+/// woken by the ticker with facts from across the other threads, and never a
+/// source of idle items for the coordinator.
+#[test]
+fn the_watcher_is_woken_with_what_moved_across_the_threads() {
+    let world = World::new();
+    let project = world.project("demo", "a.sock");
+    let worker_dir = world.home.path().join("wt");
+    std::fs::create_dir(&worker_dir).unwrap();
+    let worker = world.thread(&project, &worker_dir, |t| {
+        t.branch = "hp/demo/t-0001-task".into();
+        t.base = "main".into();
+        t.last_group = "working".into();
+        t.last_state = "working".into();
+    });
+    *world.panes.borrow_mut() = format!("[{}]", world.coordinator_pane(&project));
+    let folder = project.dir().join("threads/t-0002");
+    world.runner.on_fn(
+        |cmd| cmd.display().contains("tab create"),
+        move |_| Ok(ok(&format!(r#"{{"result":{{"root_pane":{{"workspace_id":"w1","tab_id":"w1:t3","pane_id":"w1:p3","cwd":"{}"}}}}}}"#, folder.display()))),
+    );
+    world.runner.on("pane get", ok(r#"{"result":{"pane":{"cwd":""}}}"#));
+    world.runner.on("agent prompt", ok(r#"{"result":{}}"#));
+    let head = Rc::new(RefCell::new("a".repeat(40)));
+    let served = head.clone();
+    world.runner.on_fn(|cmd| cmd.program == "git" && cmd.display().contains("rev-parse HEAD"), move |_| Ok(ok(&format!("{}\n", served.borrow()))));
+    let ctx = world.ctx();
+
+    let watch = |title: &str, kind: Option<Kind>, machine: Option<&str>| StartArgs { title: title.into(), repo: None, machine: machine.map(str::to_string), profile: None, kind, base: None, task: "Watch the threads.".into(), watch: true };
+    let refused = threads::start(&ctx, "demo", watch("Watch", Some(Kind::Worktree), None)).unwrap_err().to_string();
+    assert!(refused.contains("leave out --machine and --kind"), "{refused}");
+    let w = threads::start(&ctx, "demo", watch("Watch", None, None)).unwrap();
+    assert!(w.watch && w.kind == Kind::Tab);
+    let brief = std::fs::read_to_string(Path::new(&w.thread_dir).join("brief.md")).unwrap();
+    assert!(brief.contains("# Watcher") && brief.contains("Watch the threads."), "{brief}");
+    let again = threads::start(&ctx, "demo", watch("Second", None, None)).unwrap_err().to_string();
+    assert!(again.contains("t-0002 is already this project's watcher"), "{again}");
+
+    // Brief delivered; the worker works, the watcher is idle.
+    thread::update(&project, &w.id, |t| {
+        t.prompt_pending = false;
+        t.status = Status::Open;
+    })
+    .unwrap();
+    let agents = |watcher: &str| {
+        *world.agents.borrow_mut() = format!(
+            "[{},{},{}]",
+            agent_json("w1", "w1:t1", "w1:p1", &project.canonical_dir().to_string_lossy(), "hp-demo-coordinator", "idle"),
+            agent_json("w2", "w2:t1", "w2:p1", &worker.cwd, "hp-demo-t-0001", "working"),
+            agent_json("w1", "w1:t3", "w1:p3", &w.cwd, "hp-demo-t-0002", watcher)
+        );
+    };
+    agents("idle");
+    let wakes = || world.runner.calls.borrow().iter().filter(|c| c.display().contains("agent prompt")).map(|c| prompt_text(c).to_string()).filter(|t| t.starts_with("[hp watch]")).collect::<Vec<_>>();
+    let backdate = |wake: bool| {
+        let mut state = crate::steps::load_state(&project);
+        state.watch.last_look = "2026-01-01T00:00:00Z".into();
+        if wake {
+            state.watch.last_wake = "2026-01-01T00:00:00Z".into();
+        }
+        crate::steps::save_state(&project, &state).unwrap();
+    };
+    let mut memory = crate::steps::Memory::new(&ctx);
+
+    // The first look is the baseline: nothing to say yet.
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    assert!(wakes().is_empty());
+    assert_eq!(crate::steps::load_state(&project).watch.heads.get("t-0001"), Some(&"a".repeat(40)));
+
+    // The worker commits: nothing until the look interval has passed, then one wake.
+    *head.borrow_mut() = "b".repeat(40);
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    assert!(wakes().is_empty());
+    backdate(false);
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    let woken = wakes();
+    assert_eq!(woken.len(), 1, "{woken:?}");
+    assert!(woken[0].contains("- t-0001: branch hp/demo/t-0001-task moved to bbbbbbbbbbbb\n"), "{}", woken[0]);
+    assert!(woken[0].contains("- t-0001 worktree · "), "{}", woken[0]);
+    assert!(!woken[0].contains("t-0002 tab"), "the watcher is not in its own list");
+    // Wakes are not follow-ups: the task file stays the task.
+    assert!(!std::fs::read_to_string(thread::task_path(&project, "t-0002")).unwrap().contains("[hp watch]"));
+
+    // Busy watcher: not woken, however long ago.
+    agents("working");
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    backdate(true);
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    assert_eq!(wakes().len(), 1);
+
+    // At rest again, an hour after the last wake with nothing new: the heartbeat.
+    agents("idle");
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    ticker::tick_project_with(&ctx, &project, &mut memory).unwrap();
+    let woken = wakes();
+    assert_eq!(woken.len(), 2, "{woken:?}");
+    assert!(woken[1].starts_with("[hp watch] Nothing changed in the threads since"), "{}", woken[1]);
+
+    // Its going idle after each wake never reaches the coordinator.
+    assert!(inbox::unhandled(&project).iter().all(|i| i.subject != "t-0002"), "{:?}", inbox::unhandled(&project));
 }

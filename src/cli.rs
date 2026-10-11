@@ -369,6 +369,9 @@ enum ThreadCommand {
         /// Delegating this TASKS.md task (its title as written there): its notes are added to the task, and its owner gives --profile and --machine
         #[arg(long, value_name = "TITLE")]
         from_task: Option<String>,
+        /// Start the project's watcher: a long-running tab thread the ticker wakes with what happened across the other threads, to review their code and CI together (one per project)
+        #[arg(long, conflicts_with = "from_task")]
+        watch: bool,
     },
     /// Bring back a thread whose pane is gone or whose start failed
     Restart {
@@ -761,7 +764,7 @@ pub fn run() -> Result<()> {
             }
         },
         Command::Thread { command } => match command {
-            ThreadCommand::Start { slug, title, repo, mut machine, mut profile, kind, base, task_file, from_task } => {
+            ThreadCommand::Start { slug, title, repo, mut machine, mut profile, kind, base, task_file, from_task, watch } => {
                 let mut task = read_text(&task_file)?;
                 if let Some(from) = from_task {
                     // The task's owner picks the profile and machine.
@@ -776,8 +779,8 @@ pub fn run() -> Result<()> {
                     task = crate::tasks::delegated(&tasks_md, &from, &task)?;
                 }
                 let kind = kind.as_deref().map(crate::thread::Kind::parse).transpose()?;
-                let thread = threads::start(&ctx, &slug, StartArgs { title, repo, machine, profile, kind, base, task })?;
-                println!("{}", serde_json::json!({ "id": thread.id, "kind": thread.kind, "profile": thread.profile, "agent": thread.agent, "branch": thread.branch, "pane_id": thread.pane_id }));
+                let thread = threads::start(&ctx, &slug, StartArgs { title, repo, machine, profile, kind, base, task, watch })?;
+                println!("{}", serde_json::json!({ "id": thread.id, "kind": thread.kind, "profile": thread.profile, "agent": thread.agent, "branch": thread.branch, "pane_id": thread.pane_id, "watch": thread.watch }));
                 Ok(())
             }
             ThreadCommand::Restart { slug, id, profile } => {
