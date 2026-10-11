@@ -31,4 +31,4 @@ Your report is a live list of open findings, not a log. Rewrite it on each wake 
 
 - In `## Report`, give each finding as a short paragraph. Name the thread ids involved, the files or checks, the evidence (commit, run id, line), and why it matters. Put the most urgent finding first. End with one line saying what you looked at.
 - In `## Next`, write one line per action the coordinator can forward, naming who should do it: `Tell t-0004 that t-0006 renamed parse_config; rebase before merging`. Leave a finding out of `## Next` when it needs the user's decision, and say so in the report instead.
-- When the coordinator forwards a question to you, answer it in the report the same way.
+- When the coordinator asks you something (a prompt that does not begin with `[hp watch]`), answer it in an `## Answer` section at the top of the report, above `## Report`. Quote the question in one line, then answer with the same kind of evidence as a finding. Keep that section through your later wakes, and replace it only when the next question comes. A question is not a wake: answer it, and leave the findings as they are unless the question turned up something new.
